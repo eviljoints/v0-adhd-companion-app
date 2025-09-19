@@ -1,4 +1,3 @@
-// app/appointments/page.tsx
 "use client"
 
 import type React from "react"
@@ -39,7 +38,8 @@ import { cn } from "@/lib/utils"
 import { createClient } from "@/lib/supabase/client"
 import type { User } from "@supabase/supabase-js"
 
-// Allow coords to be nullable so users can save with just a title
+/* -------------------- Types -------------------- */
+
 interface Appointment {
   id: string
   user_id: string
@@ -54,9 +54,34 @@ interface Appointment {
   image_url?: string | null
   voice_note_url?: string | null
   voice_note_duration?: number | null
+  scheduled_at?: string | null              // <-- new
+  schedule_timezone?: string | null         // <-- new
+  time_alert_sent?: boolean | null          // <-- new
   created_at: string
   updated_at: string
 }
+
+/* -------------------- Helpers -------------------- */
+
+/** For the <input type="datetime-local"> value when editing an existing ISO timestamp */
+function utcISOToLocalDateTime(iso: string) {
+  const d = new Date(iso)
+  const tzOffset = d.getTimezoneOffset()
+  const local = new Date(d.getTime() - tzOffset * 60000)
+  return local.toISOString().slice(0, 16) // "YYYY-MM-DDTHH:mm"
+}
+
+/** Convert a datetime-local value back to UTC ISO */
+function localDateTimeToUTCISO(local: string) {
+  // local is "YYYY-MM-DDTHH:mm"
+  const [date, time] = local.split("T")
+  const [y, m, d] = date.split("-").map(Number)
+  const [hh, mm] = time.split(":").map(Number)
+  const localDate = new Date(y, (m ?? 1) - 1, d ?? 1, hh ?? 0, mm ?? 0, 0, 0)
+  return new Date(localDate.getTime() - localDate.getTimezoneOffset() * 60000).toISOString()
+}
+
+/* -------------------- Page -------------------- */
 
 export default function AppointmentsPage() {
   const router = useRouter()
@@ -68,12 +93,14 @@ export default function AppointmentsPage() {
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null)
   const [locationPermission, setLocationPermission] = useState<"granted" | "denied" | "prompt">("prompt")
 
+  // Track scheduled timeouts so we can clear/reschedule
+  const timeoutsRef = useRef<Record<string, number>>({})
   const notificationServiceRef = useRef<LocationNotificationService | null>(null)
 
-  useEffect(() => {
-    const supabase = createClient()
+  const supabase = createClient()
 
-    const getUser = async () => {
+  useEffect(() => {
+    const init = async () => {
       const {
         data: { user },
       } = await supabase.auth.getUser()
@@ -89,11 +116,11 @@ export default function AppointmentsPage() {
       notificationServiceRef.current = new LocationNotificationService(user)
     }
 
-    getUser()
+    init()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router])
 
   const loadAppointments = async (userId: string) => {
-    const supabase = createClient()
     const { data, error } = await supabase
       .from("appointments")
       .select("*")
@@ -106,7 +133,7 @@ export default function AppointmentsPage() {
       const rows = (data || []) as Appointment[]
       setAppointments(rows)
 
-      // Only watch if notifications are allowed and item has coordinates
+      // Start geofencing only for items that have coordinates & if Notification permission granted
       if (
         notificationServiceRef.current &&
         typeof Notification !== "undefined" &&
@@ -115,6 +142,9 @@ export default function AppointmentsPage() {
         const toWatch = rows.filter((apt) => !apt.completed && apt.latitude != null && apt.longitude != null)
         notificationServiceRef.current.startWatching(toWatch)
       }
+
+      // (Re)schedule time-based alarms
+      scheduleTimeAlarms(rows)
     }
     setIsLoading(false)
   }
@@ -122,40 +152,40 @@ export default function AppointmentsPage() {
   useEffect(() => {
     return () => {
       notificationServiceRef.current?.stopWatching()
+      // clear all timeouts
+      Object.values(timeoutsRef.current).forEach((id) => clearTimeout(id))
     }
   }, [])
 
   const deleteAppointment = async (id: string) => {
     if (!user) return
-    const supabase = createClient()
     const { error } = await supabase.from("appointments").delete().eq("id", id).eq("user_id", user.id)
     if (error) {
       console.error("Error deleting appointment:", error)
     } else {
       setAppointments((prev) => prev.filter((apt) => apt.id !== id))
+      // Clear any timer
+      if (timeoutsRef.current[id]) {
+        clearTimeout(timeoutsRef.current[id])
+        delete timeoutsRef.current[id]
+      }
     }
   }
 
-  // Request location (optional)
+  // Optional device location
   useEffect(() => {
     if ("geolocation" in navigator) {
       navigator.geolocation.getCurrentPosition(
         (position) => {
-          setUserLocation({
-            lat: position.coords.latitude,
-            lng: position.coords.longitude,
-          })
+          setUserLocation({ lat: position.coords.latitude, lng: position.coords.longitude })
           setLocationPermission("granted")
         },
-        (error) => {
-          console.log("Location access denied:", error)
-          setLocationPermission("denied")
-        },
+        () => setLocationPermission("denied"),
       )
     }
   }, [])
 
-  // Haversine
+  // Distance helpers
   const calculateDistance = (lat1: number, lng1: number, lat2: number, lng2: number) => {
     const R = 6371e3
     const φ1 = (lat1 * Math.PI) / 180
@@ -163,56 +193,109 @@ export default function AppointmentsPage() {
     const Δφ = ((lat2 - lat1) * Math.PI) / 180
     const Δλ = ((lng2 - lng1) * Math.PI) / 180
     const a =
-      Math.sin(Δφ / 2) * Math.sin(Δφ / 2) + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2)
+      Math.sin(Δφ / 2) ** 2 +
+      Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) ** 2
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
     return R * c
   }
 
-  const getDistanceToAppointment = (appointment: Appointment) => {
-    if (!userLocation || appointment.latitude == null || appointment.longitude == null) return null
-    return calculateDistance(userLocation.lat, userLocation.lng, appointment.latitude, appointment.longitude)
+  const getDistanceToAppointment = (a: Appointment) => {
+    if (!userLocation || a.latitude == null || a.longitude == null) return null
+    return calculateDistance(userLocation.lat, userLocation.lng, a.latitude, a.longitude)
   }
 
-  const isNearby = (appointment: Appointment) => {
-    const distance = getDistanceToAppointment(appointment)
-    return distance !== null && distance <= appointment.trigger_distance
+  const isNearby = (a: Appointment) => {
+    const d = getDistanceToAppointment(a)
+    return d !== null && d <= a.trigger_distance
   }
 
   const toggleComplete = async (id: string) => {
     if (!user) return
-    const supabase = createClient()
-    const appointment = appointments.find((apt) => apt.id === id)
-    if (!appointment) return
+    const current = appointments.find((a) => a.id === id)
+    if (!current) return
 
     const { error } = await supabase
       .from("appointments")
-      .update({
-        completed: !appointment.completed,
-        updated_at: new Date().toISOString(),
-      })
+      .update({ completed: !current.completed, updated_at: new Date().toISOString() })
       .eq("id", id)
       .eq("user_id", user.id)
 
     if (error) {
       console.error("Error updating appointment:", error)
     } else {
-      const updatedAppointments = appointments.map((apt) =>
-        apt.id === id ? { ...apt, completed: !apt.completed } : apt,
-      )
-      setAppointments(updatedAppointments)
+      const next = appointments.map((a) => (a.id === id ? { ...a, completed: !a.completed } : a))
+      setAppointments(next)
 
+      // reschedule geofencing
       if (
         notificationServiceRef.current &&
         typeof Notification !== "undefined" &&
         Notification.permission === "granted"
       ) {
-        const toWatch = updatedAppointments.filter(
-          (apt) => !apt.completed && apt.latitude != null && apt.longitude != null,
-        )
+        const toWatch = next.filter((apt) => !apt.completed && apt.latitude != null && apt.longitude != null)
         notificationServiceRef.current.startWatching(toWatch)
       }
+
+      // reschedule alarms
+      scheduleTimeAlarms(next)
     }
   }
+
+  /* -------------------- Time-based alarms -------------------- */
+
+  const showAlarm = async (apt: Appointment) => {
+    const title = apt.title || "Reminder"
+    const body = apt.location_name ? `${apt.location_name}` : "Time’s up!"
+    try {
+      if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+        // Prefer service worker (shows even if tab in background)
+        const reg = await navigator.serviceWorker?.ready
+        if (reg?.showNotification) {
+          await reg.showNotification(title, { body, tag: `apt-${apt.id}`, requireInteraction: false })
+        } else {
+          new Notification(title, { body, tag: `apt-${apt.id}` })
+        }
+      }
+    } catch (e) {
+      console.warn("Notification failed:", e)
+    }
+
+    // Mark as delivered (so we don’t fire again)
+    await supabase
+      .from("appointments")
+      .update({ time_alert_sent: true, updated_at: new Date().toISOString() })
+      .eq("id", apt.id)
+      .eq("user_id", apt.user_id)
+  }
+
+  const scheduleTimeAlarms = (rows: Appointment[]) => {
+    // clear existing
+    Object.values(timeoutsRef.current).forEach((id) => clearTimeout(id))
+    timeoutsRef.current = {}
+
+    const now = Date.now()
+    rows
+      .filter((a) => !a.completed && a.scheduled_at && !a.time_alert_sent)
+      .forEach((a) => {
+        const when = new Date(a.scheduled_at as string).getTime()
+        const delay = when - now
+
+        if (delay <= 0) {
+          // overdue => fire immediately
+          void showAlarm(a)
+          return
+        }
+
+        // cap super long timeouts (setTimeout max reliable ~24.8 days, we’re way under)
+        const id = window.setTimeout(() => {
+          void showAlarm(a)
+        }, Math.min(delay, 24 * 60 * 60 * 1000))
+
+        timeoutsRef.current[a.id] = id
+      })
+  }
+
+  /* -------------------- Render -------------------- */
 
   if (isLoading) {
     return (
@@ -227,8 +310,8 @@ export default function AppointmentsPage() {
     )
   }
 
-  const activeAppointments = appointments.filter((apt) => !apt.completed)
-  const completedAppointments = appointments.filter((apt) => apt.completed)
+  const activeAppointments = appointments.filter((a) => !a.completed)
+  const completedAppointments = appointments.filter((a) => a.completed)
   const nearbyAppointments = activeAppointments.filter(isNearby)
 
   return (
@@ -237,8 +320,10 @@ export default function AppointmentsPage() {
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold">Location Reminders</h1>
-            <p className="text-muted-foreground mt-1">Geo-tagged reminders that nudge you when you’re nearby</p>
+            <h1 className="text-3xl font-bold">Location & Time Reminders</h1>
+            <p className="text-muted-foreground mt-1">
+              Geo-tagged nudges and optional alarm times that fit ADHD rhythms
+            </p>
           </div>
           <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
             <DialogTrigger asChild>
@@ -249,8 +334,8 @@ export default function AppointmentsPage() {
             </DialogTrigger>
             <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto">
               <DialogHeader>
-                <DialogTitle>Create Location Reminder</DialogTitle>
-                <DialogDescription>Only the title is required. Add details anytime.</DialogDescription>
+                <DialogTitle>Create Reminder</DialogTitle>
+                <DialogDescription>Only the title is required. Everything else is optional.</DialogDescription>
               </DialogHeader>
               <AppointmentForm
                 user={user}
@@ -262,6 +347,7 @@ export default function AppointmentsPage() {
           </Dialog>
         </div>
 
+        {/* Ask permission & register SW */}
         <PushNotificationManager user={user} />
 
         {/* Location Status */}
@@ -298,11 +384,11 @@ export default function AppointmentsPage() {
               You’re Near These Locations!
             </h2>
             <div className="grid gap-4">
-              {nearbyAppointments.map((appointment) => (
+              {nearbyAppointments.map((a) => (
                 <AppointmentCard
-                  key={appointment.id}
-                  appointment={appointment}
-                  distance={getDistanceToAppointment(appointment)}
+                  key={a.id}
+                  appointment={a}
+                  distance={getDistanceToAppointment(a)}
                   isNearby={true}
                   onToggleComplete={toggleComplete}
                   onEdit={setEditingAppointment}
@@ -325,12 +411,12 @@ export default function AppointmentsPage() {
             </Card>
           ) : (
             <div className="grid gap-4">
-              {activeAppointments.map((appointment) => (
+              {activeAppointments.map((a) => (
                 <AppointmentCard
-                  key={appointment.id}
-                  appointment={appointment}
-                  distance={getDistanceToAppointment(appointment)}
-                  isNearby={isNearby(appointment)}
+                  key={a.id}
+                  appointment={a}
+                  distance={getDistanceToAppointment(a)}
+                  isNearby={isNearby(a)}
                   onToggleComplete={toggleComplete}
                   onEdit={setEditingAppointment}
                   onDelete={deleteAppointment}
@@ -345,11 +431,11 @@ export default function AppointmentsPage() {
           <div>
             <h2 className="text-xl font-semibold mb-4">Completed</h2>
             <div className="grid gap-4">
-              {completedAppointments.map((appointment) => (
+              {completedAppointments.map((a) => (
                 <AppointmentCard
-                  key={appointment.id}
-                  appointment={appointment}
-                  distance={getDistanceToAppointment(appointment)}
+                  key={a.id}
+                  appointment={a}
+                  distance={getDistanceToAppointment(a)}
                   isNearby={false}
                   onToggleComplete={toggleComplete}
                   onEdit={setEditingAppointment}
@@ -364,7 +450,7 @@ export default function AppointmentsPage() {
         <Dialog open={!!editingAppointment} onOpenChange={() => setEditingAppointment(null)}>
           <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>Edit Location Reminder</DialogTitle>
+              <DialogTitle>Edit Reminder</DialogTitle>
               <DialogDescription>Update any detail—you don’t have to fill everything.</DialogDescription>
             </DialogHeader>
             <AppointmentForm
@@ -384,11 +470,12 @@ export default function AppointmentsPage() {
   )
 }
 
+/* -------------------- Card -------------------- */
+
 function formatDistance(distance: number) {
   if (distance < 1000) return `${Math.round(distance)}m`
   return `${(distance / 1000).toFixed(1)}km`
 }
-
 function getPriorityColor(priority: string) {
   switch (priority) {
     case "high":
@@ -402,12 +489,11 @@ function getPriorityColor(priority: string) {
   }
 }
 
-/** Lightweight per-appointment timer with quick presets + notification on finish */
+/** ADHD-friendly quick timer */
 function QuickTimer({ id, title }: { id: string; title: string }) {
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null)
   const [running, setRunning] = useState(false)
 
-  // Persist running timers per-appointment in memory only (no DB)
   useEffect(() => {
     if (!running || secondsLeft == null) return
     const t = setInterval(() => {
@@ -416,7 +502,6 @@ function QuickTimer({ id, title }: { id: string; title: string }) {
         if (s > 1) return s - 1
         clearInterval(t)
         setRunning(false)
-        // Notify on finish (if allowed)
         if (typeof Notification !== "undefined" && Notification.permission === "granted") {
           new Notification("Timer done", { body: `${title || "Reminder"} timer finished` })
         }
@@ -444,30 +529,18 @@ function QuickTimer({ id, title }: { id: string; title: string }) {
     <div className="mt-3 flex items-center gap-2 flex-wrap">
       <Badge variant="outline" className="text-xs">{secondsLeft == null ? "No timer" : `${mm}:${ss}`}</Badge>
       <div className="flex gap-1">
-        <Button variant="outline" size="sm" onClick={() => start(5)} className="bg-transparent">
-          5m
-        </Button>
-        <Button variant="outline" size="sm" onClick={() => start(15)} className="bg-transparent">
-          15m
-        </Button>
-        <Button variant="outline" size="sm" onClick={() => start(25)} className="bg-transparent">
-          25m
-        </Button>
+        <Button variant="outline" size="sm" onClick={() => start(5)} className="bg-transparent">5m</Button>
+        <Button variant="outline" size="sm" onClick={() => start(15)} className="bg-transparent">15m</Button>
+        <Button variant="outline" size="sm" onClick={() => start(25)} className="bg-transparent">25m</Button>
       </div>
       {secondsLeft != null && secondsLeft > 0 ? (
         running ? (
-          <Button variant="ghost" size="sm" onClick={pause}>
-            Pause
-          </Button>
+          <Button variant="ghost" size="sm" onClick={pause}>Pause</Button>
         ) : (
-          <Button variant="ghost" size="sm" onClick={resume}>
-            Resume
-          </Button>
+          <Button variant="ghost" size="sm" onClick={resume}>Resume</Button>
         )
       ) : null}
-      <Button variant="ghost" size="sm" onClick={reset}>
-        Reset
-      </Button>
+      <Button variant="ghost" size="sm" onClick={reset}>Reset</Button>
     </div>
   )
 }
@@ -515,6 +588,8 @@ function AppointmentCard({
                 {appointment.description && (
                   <p className="text-gray-600 dark:text-gray-300 mt-1">{appointment.description}</p>
                 )}
+
+                {/* Location line */}
                 <div className="flex items-center gap-2 mt-2">
                   {appointment.location_name && (
                     <>
@@ -523,12 +598,11 @@ function AppointmentCard({
                     </>
                   )}
                   {distance !== null && (
-                    <Badge variant="outline" className="ml-2">
-                      {formatDistance(distance)}
-                    </Badge>
+                    <Badge variant="outline" className="ml-2">{formatDistance(distance)}</Badge>
                   )}
                 </div>
 
+                {/* Media */}
                 {appointment.voice_note_url && (
                   <div className="mt-3">
                     <VoiceNoteDisplay
@@ -537,7 +611,6 @@ function AppointmentCard({
                     />
                   </div>
                 )}
-
                 {appointment.image_url && (
                   <div className="mt-3">
                     <ImageDisplay
@@ -550,6 +623,16 @@ function AppointmentCard({
 
                 {/* ADHD Quick Timer */}
                 <QuickTimer id={appointment.id} title={appointment.title} />
+
+                {/* Time alarm info */}
+                {appointment.scheduled_at && !appointment.time_alert_sent && (
+                  <p className="text-xs text-muted-foreground mt-2">
+                    Alarm at {new Date(appointment.scheduled_at).toLocaleString()}
+                  </p>
+                )}
+                {appointment.time_alert_sent && (
+                  <p className="text-xs text-green-600 mt-2">Alarm sent</p>
+                )}
               </div>
 
               <div className="flex flex-col items-end gap-2">
@@ -574,21 +657,17 @@ function AppointmentCard({
                   </DropdownMenu>
                 </div>
                 {isNearby && !appointment.completed && (
-                  <Badge variant="default" className="bg-orange-600">
-                    Nearby!
-                  </Badge>
+                  <Badge variant="default" className="bg-orange-600">Nearby!</Badge>
                 )}
                 <div className="flex flex-col gap-1">
                   {appointment.voice_note_url && (
                     <Badge variant="outline" className="flex items-center gap-1">
-                      <Mic className="h-3 w-3" />
-                      Voice
+                      <Mic className="h-3 w-3" /> Voice
                     </Badge>
                   )}
                   {appointment.image_url && (
                     <Badge variant="outline" className="flex items-center gap-1">
-                      <ImageIcon className="h-3 w-3" />
-                      Image
+                      <ImageIcon className="h-3 w-3" /> Image
                     </Badge>
                   )}
                 </div>
@@ -600,6 +679,8 @@ function AppointmentCard({
     </Card>
   )
 }
+
+/* -------------------- Form -------------------- */
 
 function AppointmentForm({
   user,
@@ -621,6 +702,7 @@ function AppointmentForm({
     address: "",
     trigger_distance: String(appointment?.trigger_distance ?? 100),
     priority: (appointment?.priority ?? "medium") as "low" | "medium" | "high",
+    scheduled_local: appointment?.scheduled_at ? utcISOToLocalDateTime(appointment.scheduled_at) : "", // <-- local string
   })
   const [selectedImage, setSelectedImage] = useState<{ file: File; preview: string } | null>(
     appointment?.image_url ? { file: new File([], "existing"), preview: appointment.image_url } : null,
@@ -644,7 +726,7 @@ function AppointmentForm({
     setFormError(null)
 
     try {
-      // 1) Derive coordinates (optional)
+      // 1) Coordinates (optional)
       let latitude: number | null = appointment?.latitude ?? null
       let longitude: number | null = appointment?.longitude ?? null
 
@@ -660,19 +742,17 @@ function AppointmentForm({
           latitude = userLocation.lat
           longitude = userLocation.lng
         } else {
-          // No coords available; we allow saving without them
           latitude = null
           longitude = null
         }
       }
 
-      // 2) Upload media only if present
+      // 2) Media (optional)
       let imageUrl = appointment?.image_url || null
       if (selectedImage?.file && selectedImage.file.size > 0) {
         const { uploadToBucket } = await import("@/lib/storage")
         imageUrl = await uploadToBucket("appointment-images", user.id, selectedImage.file)
       }
-
       let voiceNoteUrl = appointment?.voice_note_url || null
       let voiceNoteDuration = appointment?.voice_note_duration || null
       if (voiceRecording) {
@@ -681,14 +761,21 @@ function AppointmentForm({
         voiceNoteDuration = voiceRecording.duration
       }
 
-      // 3) Build payload – only include fields that are set
+      // 3) Time alarm (optional)
+      let scheduled_at: string | null = null
+      let schedule_timezone: string | null = null
+      if (formData.scheduled_local.trim()) {
+        scheduled_at = localDateTimeToUTCISO(formData.scheduled_local)
+        schedule_timezone = Intl.DateTimeFormat().resolvedOptions().timeZone
+      }
+
+      // 4) Build payload (only include present values)
       const payload: Record<string, any> = {
         title: (formData.title || "Untitled reminder").trim(),
         updated_at: new Date().toISOString(),
         trigger_distance: parseInt(formData.trigger_distance, 10) || 100,
         priority: formData.priority,
       }
-
       if (formData.description.trim()) payload.description = formData.description.trim()
       if (formData.location_name.trim()) payload.location_name = formData.location_name.trim()
       if (latitude != null) payload.latitude = latitude
@@ -696,6 +783,12 @@ function AppointmentForm({
       if (imageUrl) payload.image_url = imageUrl
       if (voiceNoteUrl) payload.voice_note_url = voiceNoteUrl
       if (typeof voiceNoteDuration === "number") payload.voice_note_duration = voiceNoteDuration
+      if (scheduled_at) {
+        payload.scheduled_at = scheduled_at
+        payload.schedule_timezone = schedule_timezone
+        // reset delivery flag on change
+        payload.time_alert_sent = false
+      }
 
       if (appointment) {
         const { error } = await supabase.from("appointments").update(payload).eq("id", appointment.id).eq("user_id", user.id)
@@ -717,14 +810,9 @@ function AppointmentForm({
     }
   }
 
-  const handleImageSelect = (file: File, preview: string) => setSelectedImage({ file, preview })
-  const handleImageRemove = () => setSelectedImage(null)
-  const handleVoiceRecordingComplete = (blob: Blob, duration: number) => setVoiceRecording({ blob, duration })
-  const handleVoiceRecordingRemove = () => setVoiceRecording(null)
-
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
-      {/* Title (only required field) */}
+      {/* Title (required) */}
       <div>
         <Label htmlFor="title">Reminder Title</Label>
         <Input
@@ -736,7 +824,7 @@ function AppointmentForm({
         />
       </div>
 
-      {/* Optional description */}
+      {/* Description (optional) */}
       <div>
         <Label htmlFor="description">Description (optional)</Label>
         <Textarea
@@ -747,7 +835,7 @@ function AppointmentForm({
         />
       </div>
 
-      {/* Optional location name */}
+      {/* Location Name (optional) */}
       <div>
         <Label htmlFor="location_name">Location Name (optional)</Label>
         <Input
@@ -758,7 +846,7 @@ function AppointmentForm({
         />
       </div>
 
-      {/* Optional address; if empty we may use device location; if neither, we still save */}
+      {/* Address (optional) */}
       {!appointment && (
         <div>
           <Label htmlFor="address">Address (optional)</Label>
@@ -769,7 +857,7 @@ function AppointmentForm({
             placeholder="123 High St, City"
           />
           <p className="text-xs text-muted-foreground mt-1">
-            If empty, we’ll try your current location. If unavailable, we’ll save without geofencing for now.
+            If empty, we’ll try your current location. If neither is available, we’ll still save (no geofence yet).
           </p>
         </div>
       )}
@@ -782,9 +870,7 @@ function AppointmentForm({
             value={formData.trigger_distance}
             onValueChange={(v) => setFormData((p) => ({ ...p, trigger_distance: v }))}
           >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
+            <SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="50">50m (very close)</SelectItem>
               <SelectItem value="100">100m (close)</SelectItem>
@@ -799,9 +885,7 @@ function AppointmentForm({
             value={formData.priority}
             onValueChange={(v: "low" | "medium" | "high") => setFormData((p) => ({ ...p, priority: v }))}
           >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
+            <SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="low">Low</SelectItem>
               <SelectItem value="medium">Medium</SelectItem>
@@ -811,21 +895,37 @@ function AppointmentForm({
         </div>
       </div>
 
-      {/* Voice & Image (optional) */}
+      {/* Time Alarm (optional) */}
+      <div>
+        <Label htmlFor="scheduled_local">Alarm time (optional)</Label>
+        <Input
+          id="scheduled_local"
+          type="datetime-local"
+          value={formData.scheduled_local}
+          onChange={(e) => setFormData((p) => ({ ...p, scheduled_local: e.target.value }))}
+        />
+        <p className="text-xs text-muted-foreground mt-1">
+          You’ll get a notification at this time. Uses your current timezone.
+        </p>
+      </div>
+
+      {/* Voice note (optional) */}
       <div>
         <Label>Voice Note (optional)</Label>
         <VoiceRecorder
-          onRecordingComplete={handleVoiceRecordingComplete}
-          onRecordingRemove={handleVoiceRecordingRemove}
+          onRecordingComplete={(blob, duration) => void setVoiceRecording({ blob, duration })}
+          onRecordingRemove={() => setVoiceRecording(null)}
           existingRecording={appointment?.voice_note_url || undefined}
           className="w-full"
         />
       </div>
+
+      {/* Image (optional) */}
       <div>
         <Label>Attach Image (optional)</Label>
         <ImageUpload
-          onImageSelect={handleImageSelect}
-          onImageRemove={handleImageRemove}
+          onImageSelect={(file, preview) => void setSelectedImage({ file, preview })}
+          onImageRemove={() => setSelectedImage(null)}
           currentImage={selectedImage?.preview}
           className="w-full"
         />
@@ -834,9 +934,7 @@ function AppointmentForm({
       {formError && <p className="text-sm text-red-600">{formError}</p>}
 
       <div className="flex gap-2 pt-2">
-        <Button type="button" variant="outline" onClick={onClose} className="flex-1 bg-transparent">
-          Cancel
-        </Button>
+        <Button type="button" variant="outline" onClick={onClose} className="flex-1 bg-transparent">Cancel</Button>
         <Button type="submit" className="flex-1" disabled={isSubmitting}>
           {isSubmitting ? (appointment ? "Updating..." : "Creating...") : appointment ? "Update Reminder" : "Create Reminder"}
         </Button>
