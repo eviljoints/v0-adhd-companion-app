@@ -1,3 +1,4 @@
+// app\appointments\page.tsx
 "use client"
 
 import type React from "react"
@@ -538,173 +539,165 @@ function AppointmentCard({
 
 function AppointmentForm({
   user,
+  userLocation,
   appointment,
   onClose,
   onSuccess,
 }: {
   user: User | null
+  userLocation: { lat: number; lng: number } | null
   appointment?: Appointment | null
   onClose: () => void
   onSuccess: () => void
 }) {
   const [formData, setFormData] = useState({
-    title: appointment?.title || "",
-    description: appointment?.description || "",
-    location_name: appointment?.location_name || "",
+    title: appointment?.title ?? "",
+    description: appointment?.description ?? "",
+    location_name: appointment?.location_name ?? "",
     address: "",
-    trigger_distance: appointment?.trigger_distance?.toString() || "100",
-    priority: appointment?.priority || ("medium" as "low" | "medium" | "high"),
+    trigger_distance: (appointment?.trigger_distance ?? 100).toString(),
+    priority: (appointment?.priority ?? "medium") as "low" | "medium" | "high",
   })
   const [selectedImage, setSelectedImage] = useState<{ file: File; preview: string } | null>(
-    appointment?.image_url ? { file: new File([], ""), preview: appointment.image_url } : null,
+    appointment?.image_url ? { file: new File([], "existing"), preview: appointment.image_url } : null,
   )
   const [voiceRecording, setVoiceRecording] = useState<{ blob: Blob; duration: number } | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [formError, setFormError] = useState<string | null>(null)
+
+  const supabase = createClient()
+
+  const geocodeAddress = async (q: string) => {
+    const r = await fetch(`/api/geocode?q=${encodeURIComponent(q)}`, { cache: "no-store" })
+    if (!r.ok) throw new Error((await r.json()).error || "Failed to geocode")
+    return (await r.json()) as { latitude: number; longitude: number; name: string }
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!user) return
-
     setIsSubmitting(true)
+    setFormError(null)
 
     try {
-      const supabase = createClient()
+      // 1) Determine coordinates: edit -> keep; else address -> geocode; else use device
+      let latitude = appointment?.latitude
+      let longitude = appointment?.longitude
 
-      // For demo purposes, using fixed coordinates
-      // In a real app, you'd geocode the address
-      const latitude = appointment?.latitude || 40.7128 + Math.random() * 0.01
-      const longitude = appointment?.longitude || -74.006 + Math.random() * 0.01
+      if (latitude == null || longitude == null) {
+        if (formData.address.trim()) {
+          const g = await geocodeAddress(formData.address.trim())
+          latitude = g.latitude
+          longitude = g.longitude
+          if (!formData.location_name) {
+            setFormData(p => ({ ...p, location_name: g.name }))
+          }
+        } else if (userLocation) {
+          latitude = userLocation.lat
+          longitude = userLocation.lng
+        } else {
+          throw new Error("No location available. Enter an address or allow location access.")
+        }
+      }
 
-      // Handle voice recording upload (in a real app, you'd upload to storage)
+      // 2) Upload media if provided
+      let imageUrl = appointment?.image_url || null
+      if (selectedImage?.file && selectedImage.file.size > 0) {
+        const { uploadToBucket } = await import("@/lib/storage")
+        imageUrl = await uploadToBucket("appointment-images", user.id, selectedImage.file)
+      }
+
       let voiceNoteUrl = appointment?.voice_note_url || null
       let voiceNoteDuration = appointment?.voice_note_duration || null
-
       if (voiceRecording) {
-        // For demo purposes, create a blob URL
-        // In production, you'd upload to Supabase Storage or similar
-        voiceNoteUrl = URL.createObjectURL(voiceRecording.blob)
+        const { uploadVoiceBlob } = await import("@/lib/storage")
+        voiceNoteUrl = await uploadVoiceBlob("voice-notes", user.id, voiceRecording.blob, "webm")
         voiceNoteDuration = voiceRecording.duration
       }
 
-      const appointmentData = {
-        title: formData.title,
-        description: formData.description,
-        location_name: formData.location_name,
+      // 3) Build payload & save
+      const payload = {
+        title: formData.title.trim(),
+        description: formData.description.trim() || null,
+        location_name: formData.location_name.trim() || "Pinned location",
         latitude,
         longitude,
-        trigger_distance: Number.parseInt(formData.trigger_distance),
+        trigger_distance: Number.parseInt(formData.trigger_distance, 10),
         priority: formData.priority,
-        image_url: selectedImage?.preview || null,
+        image_url: imageUrl,
         voice_note_url: voiceNoteUrl,
         voice_note_duration: voiceNoteDuration,
         updated_at: new Date().toISOString(),
       }
 
+      if (!payload.title || !payload.location_name) throw new Error("Title and Location are required.")
+
       if (appointment) {
-        // Update existing appointment
-        const { error } = await supabase
-          .from("appointments")
-          .update(appointmentData)
+        const { error } = await supabase.from("appointments")
+          .update(payload)
           .eq("id", appointment.id)
           .eq("user_id", user.id)
-
         if (error) throw error
       } else {
-        // Create new appointment
-        const { error } = await supabase.from("appointments").insert([
-          {
-            user_id: user.id,
-            completed: false,
-            ...appointmentData,
-          },
-        ])
-
+        const { error } = await supabase.from("appointments")
+          .insert([{ user_id: user.id, completed: false, ...payload }])
         if (error) throw error
       }
 
       onSuccess()
       onClose()
-    } catch (error) {
-      console.error("Error saving appointment:", error)
+    } catch (err: any) {
+      console.error("Error saving appointment:", err)
+      setFormError(err?.message || "Failed to save reminder.")
     } finally {
       setIsSubmitting(false)
     }
   }
 
-  const handleImageSelect = (file: File, preview: string) => {
-    setSelectedImage({ file, preview })
-  }
-
-  const handleImageRemove = () => {
-    setSelectedImage(null)
-  }
-
-  const handleVoiceRecordingComplete = (blob: Blob, duration: number) => {
-    setVoiceRecording({ blob, duration })
-  }
-
-  const handleVoiceRecordingRemove = () => {
-    setVoiceRecording(null)
-  }
+  const handleImageSelect = (file: File, preview: string) => setSelectedImage({ file, preview })
+  const handleImageRemove = () => setSelectedImage(null)
+  const handleVoiceRecordingComplete = (blob: Blob, duration: number) => setVoiceRecording({ blob, duration })
+  const handleVoiceRecordingRemove = () => setVoiceRecording(null)
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
+      {/* (…keep your existing fields exactly as before…) */}
+      {/* Title, Description, Location Name, Address (optional), Distance, Priority, VoiceRecorder, ImageUpload */}
+      {/* show formError if present and the same footer buttons */}
+      {/* --- Title */}
       <div>
         <Label htmlFor="title">Reminder Title</Label>
-        <Input
-          id="title"
-          value={formData.title}
-          onChange={(e) => setFormData((prev) => ({ ...prev, title: e.target.value }))}
-          placeholder="e.g., Pick up prescription"
-          required
-        />
+        <Input id="title" value={formData.title}
+          onChange={(e) => setFormData((p) => ({ ...p, title: e.target.value }))} placeholder="e.g., Pick up prescription" required />
       </div>
-
+      {/* --- Description */}
       <div>
         <Label htmlFor="description">Description</Label>
-        <Textarea
-          id="description"
-          value={formData.description}
-          onChange={(e) => setFormData((prev) => ({ ...prev, description: e.target.value }))}
-          placeholder="Additional details..."
-          rows={2}
-        />
+        <Textarea id="description" value={formData.description}
+          onChange={(e) => setFormData((p) => ({ ...p, description: e.target.value }))} rows={2} />
       </div>
-
+      {/* --- Location Name */}
       <div>
         <Label htmlFor="location_name">Location Name</Label>
-        <Input
-          id="location_name"
-          value={formData.location_name}
-          onChange={(e) => setFormData((prev) => ({ ...prev, location_name: e.target.value }))}
-          placeholder="e.g., CVS Pharmacy"
-          required
-        />
+        <Input id="location_name" value={formData.location_name}
+          onChange={(e) => setFormData((p) => ({ ...p, location_name: e.target.value }))} placeholder="e.g., Boots Pharmacy" />
       </div>
-
+      {/* --- Address (optional) */}
       {!appointment && (
         <div>
-          <Label htmlFor="address">Address</Label>
-          <Input
-            id="address"
-            value={formData.address}
-            onChange={(e) => setFormData((prev) => ({ ...prev, address: e.target.value }))}
-            placeholder="123 Main St, City, State"
-            required
-          />
+          <Label htmlFor="address">Address (optional)</Label>
+          <Input id="address" value={formData.address}
+            onChange={(e) => setFormData((p) => ({ ...p, address: e.target.value }))} placeholder="123 High St, City" />
+          <p className="text-xs text-muted-foreground mt-1">If empty, we’ll use your current location.</p>
         </div>
       )}
-
+      {/* --- Distance & Priority */}
       <div className="grid grid-cols-2 gap-4">
         <div>
-          <Label htmlFor="trigger_distance">Reminder Distance</Label>
-          <Select
-            value={formData.trigger_distance}
-            onValueChange={(value) => setFormData((prev) => ({ ...prev, trigger_distance: value }))}
-          >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
+          <Label>Reminder Distance</Label>
+          <Select value={formData.trigger_distance}
+            onValueChange={(v) => setFormData((p) => ({ ...p, trigger_distance: v }))}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="50">50m (very close)</SelectItem>
               <SelectItem value="100">100m (close)</SelectItem>
@@ -713,16 +706,11 @@ function AppointmentForm({
             </SelectContent>
           </Select>
         </div>
-
         <div>
-          <Label htmlFor="priority">Priority</Label>
-          <Select
-            value={formData.priority}
-            onValueChange={(value: "low" | "medium" | "high") => setFormData((prev) => ({ ...prev, priority: value }))}
-          >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
+          <Label>Priority</Label>
+          <Select value={formData.priority}
+            onValueChange={(v: "low" | "medium" | "high") => setFormData((p) => ({ ...p, priority: v }))}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="low">Low</SelectItem>
               <SelectItem value="medium">Medium</SelectItem>
@@ -731,10 +719,9 @@ function AppointmentForm({
           </Select>
         </div>
       </div>
-
+      {/* --- Voice & Image */}
       <div>
         <Label>Voice Note (Optional)</Label>
-        <p className="text-sm text-gray-600 mb-2">Record a voice reminder to help you remember important details</p>
         <VoiceRecorder
           onRecordingComplete={handleVoiceRecordingComplete}
           onRecordingRemove={handleVoiceRecordingRemove}
@@ -742,12 +729,8 @@ function AppointmentForm({
           className="w-full"
         />
       </div>
-
       <div>
         <Label>Attach Image (Optional)</Label>
-        <p className="text-sm text-gray-600 mb-2">
-          Add a visual reminder like a shopping list, prescription, or reference photo
-        </p>
         <ImageUpload
           onImageSelect={handleImageSelect}
           onImageRemove={handleImageRemove}
@@ -756,20 +739,15 @@ function AppointmentForm({
         />
       </div>
 
-      <div className="flex gap-2 pt-4">
-        <Button type="button" variant="outline" onClick={onClose} className="flex-1 bg-transparent">
-          Cancel
-        </Button>
+      {formError && <p className="text-sm text-red-600">{formError}</p>}
+
+      <div className="flex gap-2 pt-2">
+        <Button type="button" variant="outline" onClick={onClose} className="flex-1 bg-transparent">Cancel</Button>
         <Button type="submit" className="flex-1" disabled={isSubmitting}>
-          {isSubmitting
-            ? appointment
-              ? "Updating..."
-              : "Creating..."
-            : appointment
-              ? "Update Reminder"
-              : "Create Reminder"}
+          {isSubmitting ? (appointment ? "Updating..." : "Creating...") : (appointment ? "Update Reminder" : "Create Reminder")}
         </Button>
       </div>
     </form>
   )
 }
+
