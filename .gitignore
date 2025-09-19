@@ -34,3 +34,7 @@ next-env.d.ts
 !.yarn/versions
 .pnp.*
 .yarnrc.yml
+# Yarn / PnP (we're using pnpm)
+.yarn/
+.pnp.*
+.yarnrc.yml
