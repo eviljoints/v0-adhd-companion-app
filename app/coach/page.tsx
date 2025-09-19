@@ -1,3 +1,4 @@
+// app/coach/page.tsx
 import { redirect } from "next/navigation"
 import { createClient } from "@/lib/supabase/server"
 import { CoachClient } from "@/components/coach-client"
@@ -9,6 +10,7 @@ export default async function CoachPage() {
     data: { user },
     error,
   } = await supabase.auth.getUser()
+
   if (error || !user) {
     redirect("/auth/login")
   }
@@ -19,5 +21,5 @@ export default async function CoachPage() {
     .eq("user_id", user.id)
     .order("created_at", { ascending: true })
 
-  return <CoachClient user={user} initialMessages={chatMessages || []} />
+  return <CoachClient user={user!} initialMessages={chatMessages || []} />
 }

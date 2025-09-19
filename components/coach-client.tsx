@@ -1,7 +1,6 @@
 "use client"
 
 import type React from "react"
-
 import { useState, useEffect, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -45,11 +44,7 @@ export function CoachClient({ user, initialMessages }: CoachClientProps) {
     motivationMessage: "Every small step forward is progress worth celebrating.",
     dailyTip:
       "Try the 2-minute rule: if something takes less than 2 minutes, do it now instead of adding it to your to-do list.",
-    loading: {
-      mantra: false,
-      motivation: false,
-      tip: false,
-    },
+    loading: { mantra: false, motivation: false, tip: false },
   })
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -63,45 +58,44 @@ export function CoachClient({ user, initialMessages }: CoachClientProps) {
     scrollToBottom()
   }, [messages])
 
-  // Load daily content on component mount
+  // Load daily content on first mount
   useEffect(() => {
     loadDailyMantra()
     loadDailyTip()
-  }, [])
+  }, []) // eslint-disable-line
 
-  const callCoachAPI = async (type: string, context?: string) => {
+  const buildHistoryForAPI = () =>
+    messages.slice(-6).map((m) => ({
+      role: m.is_user ? "user" as const : "assistant" as const,
+      content: m.message,
+    }))
+
+  const callCoachAPI = async (type: "daily-mantra" | "motivation" | "tip" | "chat", context?: string) => {
     const response = await fetch("/api/coach", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ type, context }),
+      cache: "no-store",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type,
+        context,           // for "chat", this is the user's message
+        history: buildHistoryForAPI(),
+      }),
     })
-
-    if (!response.ok) {
-      throw new Error("Failed to get coach response")
-    }
-
+    if (!response.ok) throw new Error("Failed to get coach response")
     const data = await response.json()
-    return data.message
+    return data.message as string
   }
 
   const saveMessageToDatabase = async (message: string, isUser: boolean) => {
     try {
       const { data, error } = await supabase
         .from("ai_chat_messages")
-        .insert([
-          {
-            user_id: user.id,
-            message,
-            is_user: isUser,
-          },
-        ])
+        .insert([{ user_id: user.id, message, is_user: isUser }])
         .select()
         .single()
 
       if (error) throw error
-      return data
+      return data as Message
     } catch (error) {
       console.error("Error saving message:", error)
       return null
@@ -109,38 +103,38 @@ export function CoachClient({ user, initialMessages }: CoachClientProps) {
   }
 
   const loadDailyMantra = async () => {
-    setCoachContent((prev) => ({ ...prev, loading: { ...prev.loading, mantra: true } }))
+    setCoachContent((p) => ({ ...p, loading: { ...p.loading, mantra: true } }))
     try {
       const mantra = await callCoachAPI("daily-mantra")
-      setCoachContent((prev) => ({ ...prev, dailyMantra: mantra }))
-    } catch (error) {
-      console.error("Failed to load daily mantra:", error)
+      setCoachContent((p) => ({ ...p, dailyMantra: mantra }))
+    } catch (e) {
+      console.error("Failed to load daily mantra:", e)
     } finally {
-      setCoachContent((prev) => ({ ...prev, loading: { ...prev.loading, mantra: false } }))
+      setCoachContent((p) => ({ ...p, loading: { ...p.loading, mantra: false } }))
     }
   }
 
   const loadMotivation = async () => {
-    setCoachContent((prev) => ({ ...prev, loading: { ...prev.loading, motivation: true } }))
+    setCoachContent((p) => ({ ...p, loading: { ...p.loading, motivation: true } }))
     try {
       const motivation = await callCoachAPI("motivation")
-      setCoachContent((prev) => ({ ...prev, motivationMessage: motivation }))
-    } catch (error) {
-      console.error("Failed to load motivation:", error)
+      setCoachContent((p) => ({ ...p, motivationMessage: motivation }))
+    } catch (e) {
+      console.error("Failed to load motivation:", e)
     } finally {
-      setCoachContent((prev) => ({ ...prev, loading: { ...prev.loading, motivation: false } }))
+      setCoachContent((p) => ({ ...p, loading: { ...p.loading, motivation: false } }))
     }
   }
 
   const loadDailyTip = async () => {
-    setCoachContent((prev) => ({ ...prev, loading: { ...prev.loading, tip: true } }))
+    setCoachContent((p) => ({ ...p, loading: { ...p.loading, tip: true } }))
     try {
       const tip = await callCoachAPI("tip")
-      setCoachContent((prev) => ({ ...prev, dailyTip: tip }))
-    } catch (error) {
-      console.error("Failed to load daily tip:", error)
+      setCoachContent((p) => ({ ...p, dailyTip: tip }))
+    } catch (e) {
+      console.error("Failed to load daily tip:", e)
     } finally {
-      setCoachContent((prev) => ({ ...prev, loading: { ...prev.loading, tip: false } }))
+      setCoachContent((p) => ({ ...p, loading: { ...p.loading, tip: false } }))
     }
   }
 
@@ -153,23 +147,18 @@ export function CoachClient({ user, initialMessages }: CoachClientProps) {
 
     try {
       const savedUserMessage = await saveMessageToDatabase(userMessageText, true)
-      if (savedUserMessage) {
-        setMessages((prev) => [...prev, savedUserMessage])
-      }
+      if (savedUserMessage) setMessages((prev) => [...prev, savedUserMessage])
 
       const response = await callCoachAPI("chat", userMessageText)
 
       const savedCoachMessage = await saveMessageToDatabase(response, false)
-      if (savedCoachMessage) {
-        setMessages((prev) => [...prev, savedCoachMessage])
-      }
+      if (savedCoachMessage) setMessages((prev) => [...prev, savedCoachMessage])
     } catch (error) {
       console.error("Failed to send message:", error)
-      const errorResponse = "I'm sorry, I'm having trouble responding right now. Please try again in a moment."
+      const errorResponse =
+        "I'm sorry, I'm having trouble responding right now. Please try again in a moment."
       const savedErrorMessage = await saveMessageToDatabase(errorResponse, false)
-      if (savedErrorMessage) {
-        setMessages((prev) => [...prev, savedErrorMessage])
-      }
+      if (savedErrorMessage) setMessages((prev) => [...prev, savedErrorMessage])
     } finally {
       setIsLoading(false)
     }
@@ -187,7 +176,9 @@ export function CoachClient({ user, initialMessages }: CoachClientProps) {
       {/* Header */}
       <div className="text-center mb-8">
         <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">Your AI Coach</h1>
-        <p className="text-gray-600 dark:text-gray-300">Personalized support, motivation, and tips for managing ADHD</p>
+        <p className="text-gray-600 dark:text-gray-300">
+          Personalized support, motivation, and tips for managing ADHD
+        </p>
       </div>
 
       {/* Daily Content Cards */}
@@ -207,7 +198,9 @@ export function CoachClient({ user, initialMessages }: CoachClientProps) {
                 Generating...
               </div>
             ) : (
-              <p className="text-sm text-gray-700 dark:text-gray-300 text-balance">"{coachContent.dailyMantra}"</p>
+              <p className="text-sm text-gray-700 dark:text-gray-300 text-balance">
+                “{coachContent.dailyMantra}”
+              </p>
             )}
             <Button
               variant="ghost"
@@ -237,7 +230,9 @@ export function CoachClient({ user, initialMessages }: CoachClientProps) {
                 Generating...
               </div>
             ) : (
-              <p className="text-sm text-gray-700 dark:text-gray-300 text-balance">{coachContent.motivationMessage}</p>
+              <p className="text-sm text-gray-700 dark:text-gray-300 text-balance">
+                {coachContent.motivationMessage}
+              </p>
             )}
             <Button
               variant="ghost"
@@ -267,7 +262,9 @@ export function CoachClient({ user, initialMessages }: CoachClientProps) {
                 Generating...
               </div>
             ) : (
-              <p className="text-sm text-gray-700 dark:text-gray-300 text-balance">{coachContent.dailyTip}</p>
+              <p className="text-sm text-gray-700 dark:text-gray-300 text-balance">
+                {coachContent.dailyTip}
+              </p>
             )}
             <Button
               variant="ghost"
@@ -290,7 +287,9 @@ export function CoachClient({ user, initialMessages }: CoachClientProps) {
             <MessageCircle className="h-5 w-5" />
             Chat with Your Coach
           </CardTitle>
-          <CardDescription>Ask questions, share your challenges, or just chat about your day</CardDescription>
+          <CardDescription>
+            Ask questions, share your challenges, or just chat about your day
+          </CardDescription>
         </CardHeader>
 
         <CardContent className="flex-1 flex flex-col p-0">
@@ -301,12 +300,15 @@ export function CoachClient({ user, initialMessages }: CoachClientProps) {
                   <Brain className="h-12 w-12 mx-auto mb-4 text-gray-300" />
                   <p>Start a conversation with your AI coach!</p>
                   <p className="text-sm mt-2">
-                    Try asking about ADHD strategies, motivation, or just how you're feeling today.
+                    Try asking about ADHD strategies, motivation, or just how you’re feeling today.
                   </p>
                 </div>
               ) : (
                 messages.map((message) => (
-                  <div key={message.id} className={cn("flex gap-3", message.is_user ? "justify-end" : "justify-start")}>
+                  <div
+                    key={message.id}
+                    className={cn("flex gap-3", message.is_user ? "justify-end" : "justify-start")}
+                  >
                     <div
                       className={cn(
                         "max-w-[80%] rounded-lg px-4 py-2",
@@ -317,7 +319,10 @@ export function CoachClient({ user, initialMessages }: CoachClientProps) {
                     >
                       <p className="text-sm">{message.message}</p>
                       <p className="text-xs opacity-70 mt-1">
-                        {new Date(message.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                        {new Date(message.created_at).toLocaleTimeString([], {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
                       </p>
                     </div>
                   </div>
@@ -328,7 +333,9 @@ export function CoachClient({ user, initialMessages }: CoachClientProps) {
                   <div className="bg-gray-100 dark:bg-gray-800 rounded-lg px-4 py-2">
                     <div className="flex items-center gap-2">
                       <RefreshCw className="h-4 w-4 animate-spin" />
-                      <span className="text-sm text-gray-600 dark:text-gray-400">Coach is typing...</span>
+                      <span className="text-sm text-gray-600 dark:text-gray-400">
+                        Coach is typing...
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -342,17 +349,12 @@ export function CoachClient({ user, initialMessages }: CoachClientProps) {
               <Textarea
                 value={inputMessage}
                 onChange={(e) => setInputMessage(e.target.value)}
-                onKeyPress={handleKeyPress}
+                onKeyDown={handleKeyPress}
                 placeholder="Type your message here..."
                 className="flex-1 min-h-[40px] max-h-[120px] resize-none"
                 disabled={isLoading}
               />
-              <Button
-                onClick={sendMessage}
-                disabled={!inputMessage.trim() || isLoading}
-                size="icon"
-                className="self-end"
-              >
+              <Button onClick={sendMessage} disabled={!inputMessage.trim() || isLoading} size="icon" className="self-end">
                 <Send className="h-4 w-4" />
               </Button>
             </div>
