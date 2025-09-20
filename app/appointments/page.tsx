@@ -1,3 +1,4 @@
+// app/appointments/page.tsx
 "use client"
 
 import type React from "react"
@@ -38,8 +39,6 @@ import { cn } from "@/lib/utils"
 import { createClient } from "@/lib/supabase/client"
 import type { User } from "@supabase/supabase-js"
 import { removeByPublicUrl } from "@/lib/storage"
-import { useAlarmSound } from "@/lib/use-alarm-sound";
-
 
 /* -------------------- Types -------------------- */
 
@@ -57,9 +56,9 @@ interface Appointment {
   image_url?: string | null
   voice_note_url?: string | null
   voice_note_duration?: number | null
-  scheduled_at?: string | null              // <-- new
-  schedule_timezone?: string | null         // <-- new
-  time_alert_sent?: boolean | null          // <-- new
+  scheduled_at?: string | null
+  schedule_timezone?: string | null
+  time_alert_sent?: boolean | null
   created_at: string
   updated_at: string
 }
@@ -95,7 +94,6 @@ export default function AppointmentsPage() {
   const [editingAppointment, setEditingAppointment] = useState<Appointment | null>(null)
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null)
   const [locationPermission, setLocationPermission] = useState<"granted" | "denied" | "prompt">("prompt")
-  const { play: playAlarmSound } = useAlarmSound();
 
   // Track scheduled timeouts so we can clear/reschedule
   const timeoutsRef = useRef<Record<string, number>>({})
@@ -161,51 +159,56 @@ export default function AppointmentsPage() {
     }
   }, [])
 
- const deleteAppointment = async (id: string) => {
-  if (!user) return
-  // optional UI confirm:
-  if (!window.confirm("Delete this reminder? This will also remove any attached image/voice note.")) return
+  /** Delete a reminder + clean up media + clear timers */
+  const deleteAppointment = async (apt: Appointment) => {
+    if (!user) return
+    if (!window.confirm("Delete this reminder? This will also remove any attached image/voice note.")) return
 
-  const supabase = createClient()
+    // 1) delete the DB row
+    const { error: delErr } = await supabase
+      .from("appointments")
+      .delete()
+      .eq("id", apt.id)
+      .eq("user_id", user.id)
 
-  // 1) fetch media URLs to clean up storage
-  const { data: row, error: selErr } = await supabase
-    .from("appointments")
-    .select("image_url, voice_note_url")
-    .eq("id", id)
-    .eq("user_id", user.id)
-    .single()
+    if (delErr) {
+      console.error("Error deleting appointment:", delErr)
+      return
+    }
 
-  if (selErr) {
-    console.error("Fetch for delete failed:", selErr)
-    // you can continue; row might not exist
-  } else if (row) {
-    try { if (row.image_url) await removeByPublicUrl(row.image_url) } catch (e) { console.warn("Image delete:", e) }
-    try { if (row.voice_note_url) await removeByPublicUrl(row.voice_note_url) } catch (e) { console.warn("Voice delete:", e) }
+    // 2) update UI
+    setAppointments((prev) => prev.filter((a) => a.id !== apt.id))
+
+    // 3) clear any local timer
+    if (timeoutsRef.current[apt.id]) {
+      clearTimeout(timeoutsRef.current[apt.id])
+      delete timeoutsRef.current[apt.id]
+    }
+
+    // 4) storage cleanup (best effort)
+    try {
+      if (apt.image_url) await removeByPublicUrl(apt.image_url)
+    } catch (e) {
+      console.warn("Image delete:", e)
+    }
+    try {
+      if (apt.voice_note_url) await removeByPublicUrl(apt.voice_note_url)
+    } catch (e) {
+      console.warn("Voice delete:", e)
+    }
+
+    // 5) restart geofencing watchers for remaining active items
+    if (
+      notificationServiceRef.current &&
+      typeof Notification !== "undefined" &&
+      Notification.permission === "granted"
+    ) {
+      const toWatch = appointments
+        .filter((a) => a.id !== apt.id)
+        .filter((a) => !a.completed && a.latitude != null && a.longitude != null)
+      notificationServiceRef.current.startWatching(toWatch)
+    }
   }
-
-  // 2) delete the DB row
-  const { error: delErr } = await supabase
-    .from("appointments")
-    .delete()
-    .eq("id", id)
-    .eq("user_id", user.id)
-
-  if (delErr) {
-    console.error("Error deleting appointment:", delErr)
-    return
-  }
-
-  // 3) update UI + clear any local timer
-  setAppointments(prev => prev.filter(apt => apt.id !== id))
-
-  // if you have timeoutsRef from your timer/alarms code:
-  if ((timeoutsRef as any)?.current?.[id]) {
-    clearTimeout(timeoutsRef.current[id] as number)
-    delete timeoutsRef.current[id]
-  }
-}
-
 
   // Optional device location
   useEffect(() => {
@@ -279,30 +282,29 @@ export default function AppointmentsPage() {
   /* -------------------- Time-based alarms -------------------- */
 
   const showAlarm = async (apt: Appointment) => {
-  const title = apt.title || "Reminder";
-  const body = apt.location_name ? `${apt.location_name}` : "Time’s up!";
-  try {
-    // Prefer SW notification
-    const reg = await navigator.serviceWorker?.ready;
-    if (reg?.showNotification) {
-      await reg.showNotification(title, { body, tag: `apt-${apt.id}`, requireInteraction: false });
-    } else if (typeof Notification !== "undefined" && Notification.permission === "granted") {
-      new Notification(title, { body, tag: `apt-${apt.id}` });
+    const title = apt.title || "Reminder"
+    const body = apt.location_name ? `${apt.location_name}` : "Time’s up!"
+    try {
+      if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+        // Prefer service worker (shows even if tab in background)
+        const reg = await navigator.serviceWorker?.ready
+        if (reg?.showNotification) {
+          await reg.showNotification(title, { body, tag: `apt-${apt.id}`, requireInteraction: false })
+        } else {
+          new Notification(title, { body, tag: `apt-${apt.id}` })
+        }
+      }
+    } catch (e) {
+      console.warn("Notification failed:", e)
     }
-  } catch (e) {
-    console.warn("Notification failed:", e);
+
+    // Mark as delivered (so we don’t fire again)
+    await supabase
+      .from("appointments")
+      .update({ time_alert_sent: true, updated_at: new Date().toISOString() })
+      .eq("id", apt.id)
+      .eq("user_id", apt.user_id)
   }
-
-  // **Play a local chime when the alarm fires**
-  playAlarmSound();
-
-  await supabase
-    .from("appointments")
-    .update({ time_alert_sent: true, updated_at: new Date().toISOString() })
-    .eq("id", apt.id)
-    .eq("user_id", apt.user_id);
-};
-
 
   const scheduleTimeAlarms = (rows: Appointment[]) => {
     // clear existing
@@ -322,7 +324,7 @@ export default function AppointmentsPage() {
           return
         }
 
-        // cap super long timeouts (setTimeout max reliable ~24.8 days, we’re way under)
+        // cap super long timeouts (setTimeout max reliable ~24.8 days)
         const id = window.setTimeout(() => {
           void showAlarm(a)
         }, Math.min(delay, 24 * 60 * 60 * 1000))
@@ -529,8 +531,6 @@ function getPriorityColor(priority: string) {
 function QuickTimer({ id, title }: { id: string; title: string }) {
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null)
   const [running, setRunning] = useState(false)
-  const { play: playTimerSound } = useAlarmSound();
-
 
   useEffect(() => {
     if (!running || secondsLeft == null) return
@@ -596,7 +596,7 @@ function AppointmentCard({
   isNearby: boolean
   onToggleComplete: (id: string) => void
   onEdit: (appointment: Appointment) => void
-  onDelete: (id: string) => void
+  onDelete: (appointment: Appointment) => void
 }) {
   return (
     <Card
@@ -676,6 +676,21 @@ function AppointmentCard({
               <div className="flex flex-col items-end gap-2">
                 <div className="flex items-center gap-2">
                   <Badge className={getPriorityColor(appointment.priority)}>{appointment.priority}</Badge>
+
+                  {/* Always-visible Delete button */}
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={() => onDelete(appointment)}
+                    className="h-8"
+                    aria-label="Delete reminder"
+                    title="Delete"
+                  >
+                    <Trash2 className="h-4 w-4 mr-1" />
+                    Delete
+                  </Button>
+
+                  {/* Kebab menu (kept) */}
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <Button variant="ghost" size="icon" className="h-8 w-8">
@@ -687,7 +702,7 @@ function AppointmentCard({
                         <Edit className="h-4 w-4 mr-2" />
                         Edit
                       </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => onDelete(appointment.id)} className="text-red-600">
+                      <DropdownMenuItem onClick={() => onDelete(appointment)} className="text-red-600">
                         <Trash2 className="h-4 w-4 mr-2" />
                         Delete
                       </DropdownMenuItem>
@@ -740,7 +755,7 @@ function AppointmentForm({
     address: "",
     trigger_distance: String(appointment?.trigger_distance ?? 100),
     priority: (appointment?.priority ?? "medium") as "low" | "medium" | "high",
-    scheduled_local: appointment?.scheduled_at ? utcISOToLocalDateTime(appointment.scheduled_at) : "", // <-- local string
+    scheduled_local: appointment?.scheduled_at ? utcISOToLocalDateTime(appointment.scheduled_at) : "",
   })
   const [selectedImage, setSelectedImage] = useState<{ file: File; preview: string } | null>(
     appointment?.image_url ? { file: new File([], "existing"), preview: appointment.image_url } : null,
