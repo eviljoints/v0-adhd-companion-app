@@ -1,277 +1,268 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
-import { createClient } from "@/lib/supabase/client"
-import { useRouter } from "next/navigation"
-import { Card, CardContent } from "@/components/ui/card"
+import { useState, useEffect } from "react"
+import Link from "next/link"
+import { usePathname, useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
-import { Label } from "@/components/ui/label"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Input } from "@/components/ui/input"
-import { Separator } from "@/components/ui/separator"
+import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet"
+import { Badge } from "@/components/ui/badge"
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import {
+  Home,
+  MapPin,
+  Brain,
+  Users,
+  Settings,
+  Menu,
+  Bell,
+  LogOut,
+  User,
+  NotepadTextDashed,
+  CalendarDays, // <- safer calendar icon
+} from "lucide-react"
+import { cn } from "@/lib/utils"
+import { createClient } from "@/lib/supabase/client"
+import type { User as SupabaseUser } from "@supabase/supabase-js"
 
-type GCalListItem = {
-  id: string
-  summary: string
-  primary?: boolean
-}
+// ✅ Corrected nav items (note Calendar item uses {} not ())
+const navigation = [
+  { name: "Home", href: "/", icon: Home },
+  { name: "Appointments", href: "/appointments", icon: MapPin },
+  { name: "AI Coach", href: "/coach", icon: Brain },
+  { name: "VIP Contacts", href: "/contacts", icon: Users },
+  { name: "Screening", href: "/screening", icon: NotepadTextDashed },
+  { name: "Settings", href: "/settings", icon: Settings },
+  { name: "Calendar Sync", href: "/calendar-sync", icon: CalendarDays }, // 👈 added
+]
 
-type GCalEvent = {
-  id: string
-  status?: string
-  summary?: string
-  description?: string
-  location?: string
-  start?: { date?: string; dateTime?: string; timeZone?: string }
-  end?: { date?: string; dateTime?: string; timeZone?: string }
-}
-
-export default function CalendarSyncPage() {
+export function Navigation() {
+  const pathname = usePathname()
   const router = useRouter()
-  const supabase = createClient()
-  const [loading, setLoading] = useState(true)
-  const [providerToken, setProviderToken] = useState<string | null>(null)
-  const [calendars, setCalendars] = useState<GCalListItem[]>([])
-  const [calendarId, setCalendarId] = useState<string>("")
-  const [events, setEvents] = useState<GCalEvent[]>([])
-  const [timeMin, setTimeMin] = useState<string>(() => new Date().toISOString())
-  const [timeMax, setTimeMax] = useState<string>(() => {
-    const d = new Date()
-    d.setMonth(d.getMonth() + 1)
-    return d.toISOString()
-  })
-  const [fetching, setFetching] = useState(false)
-  const [importingId, setImportingId] = useState<string | null>(null)
-  const [msg, setMsg] = useState<string | null>(null)
+  const [isOpen, setIsOpen] = useState(false)
+  const [user, setUser] = useState<SupabaseUser | null>(null)
+  const [profile, setProfile] = useState<any>(null)
+  const [badgeCounts, setBadgeCounts] = useState<Record<string, number>>({})
 
   useEffect(() => {
-    (async () => {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return router.push("/auth/login")
+    const supabase = createClient()
 
-      const { data: { session } } = await supabase.auth.getSession()
-      // Supabase returns the Google token as session.provider_token if scopes allow it
-      const token = (session as any)?.provider_token as string | undefined
-      setProviderToken(token ?? null)
-      setLoading(false)
-
-      if (token) {
-        await loadCalendars(token)
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      setUser(user)
+      if (user) {
+        supabase.from("profiles").select("*").eq("id", user.id).single().then(({ data }) => setProfile(data))
+        fetchBadgeCounts(user.id)
       }
-    })()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    })
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_, session) => {
+      setUser(session?.user ?? null)
+      if (session?.user) {
+        supabase.from("profiles").select("*").eq("id", session.user.id).single().then(({ data }) => setProfile(data))
+        fetchBadgeCounts(session.user.id)
+      } else {
+        setProfile(null)
+        setBadgeCounts({})
+      }
+    })
+
+    return () => subscription.unsubscribe()
   }, [])
 
-  async function connectGoogleCalendar() {
-    // IMPORTANT: in Supabase Dashboard → Auth → Google, add scope:
-    // https://www.googleapis.com/auth/calendar.readonly
-    // This will prompt for re-consent.
-    await supabase.auth.signInWithOAuth({
-      provider: "google",
-      options: {
-        scopes: "openid email profile https://www.googleapis.com/auth/calendar.readonly",
-        redirectTo: typeof window !== "undefined" ? `${window.location.origin}/calendar-sync` : undefined,
-      },
-    })
-  }
-
-  async function loadCalendars(token: string) {
-    setMsg(null)
-    setCalendars([])
+  const fetchBadgeCounts = async (userId: string) => {
+    const supabase = createClient()
     try {
-      const res = await fetch("/api/calendar/list", {
-        headers: { Authorization: `Bearer ${token}` },
-        cache: "no-store",
-      })
-      const j = await res.json()
-      if (!res.ok) throw new Error(j.error || "Failed to list calendars")
-      const items: GCalListItem[] = j.items || []
-      setCalendars(items)
-      const primary = items.find(c => c.primary) || items[0]
-      setCalendarId(primary?.id || "")
-    } catch (e: any) {
-      setMsg(e.message || "Couldn’t load calendars.")
-    }
-  }
+      const [appointmentsResult, contactsResult] = await Promise.allSettled([
+        supabase.from("appointments").select("*", { count: "exact" }).eq("user_id", userId).eq("completed", false),
+        supabase.from("vip_contacts").select("*").eq("user_id", userId),
+      ])
 
-  async function loadEvents() {
-    if (!providerToken || !calendarId) return
-    setFetching(true)
-    setEvents([])
-    setMsg(null)
-    try {
-      const res = await fetch(`/api/calendar/events?calendarId=${encodeURIComponent(calendarId)}&timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}`, {
-        headers: { Authorization: `Bearer ${providerToken}` },
-        cache: "no-store",
-      })
-      const j = await res.json()
-      if (!res.ok) throw new Error(j.error || "Failed to fetch events")
-      setEvents(j.items || [])
-      if ((j.items || []).length === 0) setMsg("No events in this range.")
-    } catch (e: any) {
-      setMsg(e.message || "Couldn’t load events.")
-    } finally {
-      setFetching(false)
-    }
-  }
+      const newBadgeCounts: Record<string, number> = {}
 
-  async function importEvent(ev: GCalEvent) {
-    setImportingId(ev.id)
-    setMsg(null)
-    try {
-      // Prefer precise time if present; all-day events only have date
-      const startsAtISO =
-        ev.start?.dateTime
-          ? new Date(ev.start.dateTime).toISOString()
-          : ev.start?.date
-          ? new Date(ev.start.date + "T09:00:00").toISOString()
-          : null
-
-      // Try to geocode the event.location (optional)
-      let latitude: number | null = null
-      let longitude: number | null = null
-      let location_name: string | null = ev.location || null
-
-      if (ev.location) {
-        try {
-          const g = await (await fetch(`/api/geocode?q=${encodeURIComponent(ev.location)}`, { cache: "no-store" })).json()
-          if (g?.latitude && g?.longitude) {
-            latitude = g.latitude
-            longitude = g.longitude
-            if (!location_name) location_name = g.name || ev.location
-          }
-        } catch { /* ignore geocode errors */ }
+      if (appointmentsResult.status === "fulfilled" && appointmentsResult.value.count) {
+        newBadgeCounts["Appointments"] = appointmentsResult.value.count
       }
 
-      const insert = {
-        title: ev.summary || "Calendar event",
-        description: ev.description || null,
-        location_name,
-        latitude,
-        longitude,
-        trigger_distance: 100, // default proximity
-        priority: "medium",
-        completed: false,
-        scheduled_at: startsAtISO,
-        schedule_timezone: ev.start?.timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone,
-        time_alert_sent: false,
+      if (contactsResult.status === "fulfilled" && contactsResult.value.data) {
+        const contactsNeedingAttention = contactsResult.value.data.filter((contact: any) => {
+          if (!contact.last_contacted) return true
+          const daysSince = Math.floor((Date.now() - new Date(contact.last_contacted).getTime()) / 86_400_000)
+          return daysSince >= (contact.contact_frequency_days || 7)
+        })
+        if (contactsNeedingAttention.length > 0) {
+          newBadgeCounts["VIP Contacts"] = contactsNeedingAttention.length
+        }
       }
 
-      const supa = createClient()
-      const { data: { user } } = await supa.auth.getUser()
-      if (!user) throw new Error("Not signed in")
-
-      const { error } = await supa.from("appointments").insert([{ user_id: user.id, ...insert }])
-      if (error) throw error
-
-      setMsg(`Imported “${ev.summary || "event"}”`)
-    } catch (e: any) {
-      setMsg(e.message || "Import failed.")
-    } finally {
-      setImportingId(null)
+      setBadgeCounts(newBadgeCounts)
+    } catch (err) {
+      console.error("Error fetching badge counts:", err)
     }
   }
 
-  const dateTimeHelp = useMemo(
-    () => "Use ISO like 2025-03-01T00:00:00Z. Defaults set to [now, +1 month].",
-    []
+  const handleSignOut = async () => {
+    const supabase = createClient()
+    await supabase.auth.signOut()
+    router.push("/auth/login")
+  }
+
+  const NavItems = ({ mobile = false }) => (
+    <nav className={cn("space-y-2", mobile && "px-4")}>
+      {navigation.map((item) => {
+        const isActive = pathname === item.href
+        const badgeCount = badgeCounts[item.name]
+        return (
+          <Link
+            key={item.name}
+            href={item.href}
+            onClick={() => mobile && setIsOpen(false)}
+            className={cn(
+              "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
+              isActive
+                ? "bg-primary text-primary-foreground"
+                : "text-muted-foreground hover:text-foreground hover:bg-muted",
+            )}
+          >
+            <item.icon className="h-4 w-4" />
+            {item.name}
+            {!!badgeCount && (
+              <Badge variant="secondary" className="ml-auto">
+                {badgeCount}
+              </Badge>
+            )}
+          </Link>
+        )
+      })}
+    </nav>
   )
 
-  return (
-    <div className="md:pl-64">
-      <div className="p-6 max-w-3xl mx-auto space-y-6">
-        <Card>
-          <CardContent className="pt-6 space-y-4">
-            <h1 className="text-2xl font-bold">Google Calendar Sync (Read-only)</h1>
-            <p className="text-sm text-muted-foreground">
-              Connect your Google Calendar, review upcoming events, and import any as location/time reminders.
-            </p>
+  const UserMenu = () => (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" className="relative h-8 w-8 rounded-full">
+          <Avatar className="h-8 w-8">
+            <AvatarImage src={profile?.avatar_url || "/placeholder.svg"} alt={profile?.full_name || user?.email} />
+            <AvatarFallback>
+              {profile?.full_name ? profile.full_name.charAt(0).toUpperCase() : user?.email?.charAt(0).toUpperCase()}
+            </AvatarFallback>
+          </Avatar>
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent className="w-56" align="end" forceMount>
+        <DropdownMenuLabel className="font-normal">
+          <div className="flex flex-col space-y-1">
+            <p className="text-sm font-medium leading-none">{profile?.full_name || "User"}</p>
+            <p className="text-xs leading-none text-muted-foreground">{user?.email}</p>
+          </div>
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem asChild>
+          <Link href="/profile">
+            <User className="mr-2 h-4 w-4" />
+            <span>Profile</span>
+          </Link>
+        </DropdownMenuItem>
+        <DropdownMenuItem asChild>
+          <Link href="/settings">
+            <Settings className="mr-2 h-4 w-4" />
+            <span>Settings</span>
+          </Link>
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onClick={handleSignOut}>
+          <LogOut className="mr-2 h-4 w-4" />
+          <span>Log out</span>
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
 
-            {!loading && !providerToken && (
-              <div className="space-y-3">
-                <p className="text-sm">
-                  To continue, connect Google with the <code>calendar.readonly</code> permission.
-                </p>
-                <Button onClick={connectGoogleCalendar}>Connect Google Calendar</Button>
-              </div>
-            )}
-
-            {!loading && providerToken && (
-              <>
-                <div className="flex gap-2 items-end">
-                  <div className="flex-1">
-                    <Label>Calendar</Label>
-                    <Select value={calendarId} onValueChange={setCalendarId}>
-                      <SelectTrigger><SelectValue placeholder="Choose a calendar" /></SelectTrigger>
-                      <SelectContent>
-                        {calendars.map((c) => (
-                          <SelectItem key={c.id} value={c.id}>
-                            {c.summary}{c.primary ? " (Primary)" : ""}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <Button variant="outline" onClick={() => loadCalendars(providerToken!)}>Reload calendars</Button>
-                </div>
-
-                <Separator />
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <Label>From (timeMin, ISO)</Label>
-                    <Input value={timeMin} onChange={(e) => setTimeMin(e.target.value)} />
-                  </div>
-                  <div>
-                    <Label>To (timeMax, ISO)</Label>
-                    <Input value={timeMax} onChange={(e) => setTimeMax(e.target.value)} />
-                  </div>
-                </div>
-                <p className="text-xs text-muted-foreground">{dateTimeHelp}</p>
-
-                <div className="flex gap-2">
-                  <Button disabled={!calendarId || fetching} onClick={loadEvents}>
-                    {fetching ? "Loading…" : "Load events"}
-                  </Button>
-                </div>
-
-                {msg && <p className="text-sm">{msg}</p>}
-
-                <Separator />
-
-                <div className="space-y-3">
-                  {events.map((ev) => {
-                    const start =
-                      ev.start?.dateTime
-                        ? new Date(ev.start.dateTime).toLocaleString()
-                        : ev.start?.date
-                        ? `${ev.start.date} (all-day)`
-                        : "—"
-                    return (
-                      <div key={ev.id} className="p-3 rounded border">
-                        <div className="font-medium">{ev.summary || "(no title)"}</div>
-                        <div className="text-sm text-muted-foreground">
-                          Start: {start}
-                          {ev.location ? <> • Location: {ev.location}</> : null}
-                        </div>
-                        <div className="mt-2 flex gap-2">
-                          <Button
-                            size="sm"
-                            onClick={() => importEvent(ev)}
-                            disabled={!!importingId}
-                          >
-                            {importingId === ev.id ? "Importing…" : "Import as Reminder"}
-                          </Button>
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
-              </>
-            )}
-          </CardContent>
-        </Card>
+  if (!user) {
+    return (
+      <div className="md:hidden">
+        <div className="flex items-center justify-between p-4 border-b bg-card">
+          <div className="flex items-center">
+            <Brain className="h-6 w-6 text-primary" />
+            <span className="ml-2 font-semibold">ADHD Companion</span>
+          </div>
+          <Button asChild>
+            <Link href="/auth/login">Sign In</Link>
+          </Button>
+        </div>
       </div>
-    </div>
+    )
+  }
+
+  return (
+    <>
+      {/* Desktop Sidebar */}
+      <div className="hidden md:flex md:w-64 md:flex-col md:fixed md:inset-y-0">
+        <div className="flex flex-col flex-grow pt-5 bg-card border-r overflow-y-auto">
+          <div className="flex items-center flex-shrink-0 px-4">
+            <Brain className="h-8 w-8 text-primary" />
+            <span className="ml-2 text-lg font-semibold">ADHD Companion</span>
+          </div>
+          <div className="mt-8 flex-grow flex flex-col">
+            <NavItems />
+          </div>
+          <div className="flex-shrink-0 p-4 border-t">
+            <div className="flex items-center gap-3">
+              <Avatar className="h-8 w-8">
+                <AvatarImage src={profile?.avatar_url || "/placeholder.svg"} alt={profile?.full_name || user?.email} />
+                <AvatarFallback>
+                  {profile?.full_name
+                    ? profile.full_name.charAt(0).toUpperCase()
+                    : user?.email?.charAt(0).toUpperCase()}
+                </AvatarFallback>
+              </Avatar>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium truncate">{profile?.full_name || "User"}</p>
+                <p className="text-xs text-muted-foreground truncate">{user?.email}</p>
+              </div>
+              <UserMenu />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Mobile Header */}
+      <div className="md:hidden">
+        <div className="flex items-center justify-between p-4 border-b bg-card">
+          <div className="flex items-center">
+            <Brain className="h-6 w-6 text-primary" />
+            <span className="ml-2 font-semibold">ADHD Companion</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" size="icon">
+              <Bell className="h-5 w-5" />
+            </Button>
+            <UserMenu />
+            <Sheet open={isOpen} onOpenChange={setIsOpen}>
+              <SheetTrigger asChild>
+                <Button variant="ghost" size="icon">
+                  <Menu className="h-5 w-5" />
+                </Button>
+              </SheetTrigger>
+              <SheetContent side="left" className="w-64">
+                <div className="flex items-center mb-8">
+                  <Brain className="h-6 w-6 text-primary" />
+                  <span className="ml-2 font-semibold">ADHD Companion</span>
+                </div>
+                <NavItems mobile />
+              </SheetContent>
+            </Sheet>
+          </div>
+        </div>
+      </div>
+    </>
   )
 }
