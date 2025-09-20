@@ -66,22 +66,25 @@ interface Appointment {
 /* -------------------- Helpers -------------------- */
 
 /** For the <input type="datetime-local"> value when editing an existing ISO timestamp */
+/** ISO (UTC) -> value for <input type="datetime-local"> e.g. "2025-09-20T14:30" */
 function utcISOToLocalDateTime(iso: string) {
-  const d = new Date(iso)
-  const tzOffset = d.getTimezoneOffset()
-  const local = new Date(d.getTime() - tzOffset * 60000)
-  return local.toISOString().slice(0, 16) // "YYYY-MM-DDTHH:mm"
+  if (!iso) return ""
+  const d = new Date(iso)                           // this is the correct UTC instant
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset()) // shift to local clock time
+  return d.toISOString().slice(0, 16)
 }
 
-/** Convert a datetime-local value back to UTC ISO */
+/** value from <input type="datetime-local"> -> ISO (UTC) to store */
 function localDateTimeToUTCISO(local: string) {
-  // local is "YYYY-MM-DDTHH:mm"
+  if (!local) return ""
   const [date, time] = local.split("T")
+  if (!date || !time) return ""
   const [y, m, d] = date.split("-").map(Number)
   const [hh, mm] = time.split(":").map(Number)
-  const localDate = new Date(y, (m ?? 1) - 1, d ?? 1, hh ?? 0, mm ?? 0, 0, 0)
-  return new Date(localDate.getTime() - localDate.getTimezoneOffset() * 60000).toISOString()
+  // Create a *local* time; toISOString() converts to the correct UTC instant.
+  return new Date(y, (m ?? 1) - 1, d ?? 1, hh ?? 0, mm ?? 0, 0, 0).toISOString()
 }
+
 
 /* -------------------- Page -------------------- */
 
