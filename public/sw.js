@@ -1,56 +1,52 @@
 /* public/sw.js */
 
-/** Keep the service worker alive long enough for async work */
-self.addEventListener("install", (event) => {
-  self.skipWaiting();
-});
+self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (event) => {
-  self.clients.claim();
+  event.waitUntil(self.clients.claim());
 });
 
-/** Receive push payloads from your Edge Function (web-push) */
 self.addEventListener("push", (event) => {
-  try {
-    const data = event.data ? event.data.json() : {};
-    const title = data.title || "Reminder";
-    const body = data.body || "You have a due reminder.";
-    const tag = data.tag || "adhd-reminder";
-    const extra = data.data || {};
+  const data = (() => {
+    try { return event.data?.json() || {}; } catch { return {}; }
+  })();
 
-    event.waitUntil(
-      self.registration.showNotification(title, {
-        body,
-        tag,
-        requireInteraction: !!data.requireInteraction,
-        data: extra,
-      })
-    );
-  } catch (e) {
-    // Fallback: show a generic notification if JSON parse fails
-    event.waitUntil(
-      self.registration.showNotification("Reminder", {
-        body: "You have a due reminder.",
-        tag: "adhd-reminder",
-      })
-    );
-  }
+  const title = data.title || "Reminder";
+  const body = data.body || "You have a reminder.";
+  const tag = data.tag || "reminder";
+  const notifData = data.data || {};
+
+  event.waitUntil((async () => {
+    // Show notification
+    await self.registration.showNotification(title, {
+      body,
+      tag,
+      data: notifData,
+      // NOTE: Web Notifications do not support custom sounds cross-browser
+      // The OS may play its default sound.
+      requireInteraction: false,
+    });
+
+    // Ask any open pages to play a local sound
+    const clients = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    for (const client of clients) {
+      client.postMessage({ type: "play-sound" });
+    }
+  })());
 });
 
-/** Focus an existing client or open the app on click */
 self.addEventListener("notificationclick", (event) => {
+  const url = event.notification?.data?.url || "/appointments";
   event.notification.close();
-  const url = (event.notification.data && event.notification.data.url) || "/appointments";
-
-  event.waitUntil(
-    (async () => {
-      const allClients = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
-      const client = allClients.find((c) => c.url.includes(self.registration.scope));
-      if (client) {
-        client.focus();
-        client.postMessage({ type: "OPEN_URL", url });
-      } else {
-        await self.clients.openWindow(url);
+  event.waitUntil((async () => {
+    const allClients = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    for (const client of allClients) {
+      if ("focus" in client) {
+        // If the app is already open, focus it
+        client.postMessage({ type: "play-sound" }); // optional second chime on click
+        return client.focus();
       }
-    })()
-  );
+    }
+    // Otherwise open a new window
+    return self.clients.openWindow(url);
+  })());
 });

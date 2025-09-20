@@ -38,6 +38,8 @@ import { cn } from "@/lib/utils"
 import { createClient } from "@/lib/supabase/client"
 import type { User } from "@supabase/supabase-js"
 import { removeByPublicUrl } from "@/lib/storage"
+import { useAlarmSound } from "@/lib/use-alarm-sound";
+
 
 /* -------------------- Types -------------------- */
 
@@ -93,6 +95,7 @@ export default function AppointmentsPage() {
   const [editingAppointment, setEditingAppointment] = useState<Appointment | null>(null)
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null)
   const [locationPermission, setLocationPermission] = useState<"granted" | "denied" | "prompt">("prompt")
+  const { play: playAlarmSound } = useAlarmSound();
 
   // Track scheduled timeouts so we can clear/reschedule
   const timeoutsRef = useRef<Record<string, number>>({})
@@ -276,29 +279,30 @@ export default function AppointmentsPage() {
   /* -------------------- Time-based alarms -------------------- */
 
   const showAlarm = async (apt: Appointment) => {
-    const title = apt.title || "Reminder"
-    const body = apt.location_name ? `${apt.location_name}` : "Time’s up!"
-    try {
-      if (typeof Notification !== "undefined" && Notification.permission === "granted") {
-        // Prefer service worker (shows even if tab in background)
-        const reg = await navigator.serviceWorker?.ready
-        if (reg?.showNotification) {
-          await reg.showNotification(title, { body, tag: `apt-${apt.id}`, requireInteraction: false })
-        } else {
-          new Notification(title, { body, tag: `apt-${apt.id}` })
-        }
-      }
-    } catch (e) {
-      console.warn("Notification failed:", e)
+  const title = apt.title || "Reminder";
+  const body = apt.location_name ? `${apt.location_name}` : "Time’s up!";
+  try {
+    // Prefer SW notification
+    const reg = await navigator.serviceWorker?.ready;
+    if (reg?.showNotification) {
+      await reg.showNotification(title, { body, tag: `apt-${apt.id}`, requireInteraction: false });
+    } else if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+      new Notification(title, { body, tag: `apt-${apt.id}` });
     }
-
-    // Mark as delivered (so we don’t fire again)
-    await supabase
-      .from("appointments")
-      .update({ time_alert_sent: true, updated_at: new Date().toISOString() })
-      .eq("id", apt.id)
-      .eq("user_id", apt.user_id)
+  } catch (e) {
+    console.warn("Notification failed:", e);
   }
+
+  // **Play a local chime when the alarm fires**
+  playAlarmSound();
+
+  await supabase
+    .from("appointments")
+    .update({ time_alert_sent: true, updated_at: new Date().toISOString() })
+    .eq("id", apt.id)
+    .eq("user_id", apt.user_id);
+};
+
 
   const scheduleTimeAlarms = (rows: Appointment[]) => {
     // clear existing
@@ -525,6 +529,8 @@ function getPriorityColor(priority: string) {
 function QuickTimer({ id, title }: { id: string; title: string }) {
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null)
   const [running, setRunning] = useState(false)
+  const { play: playTimerSound } = useAlarmSound();
+
 
   useEffect(() => {
     if (!running || secondsLeft == null) return
