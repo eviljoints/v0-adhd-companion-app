@@ -65,25 +65,26 @@ interface Appointment {
 
 /* -------------------- Helpers -------------------- */
 
-/** For the <input type="datetime-local"> value when editing an existing ISO timestamp */
-/** ISO (UTC) -> value for <input type="datetime-local"> e.g. "2025-09-20T14:30" */
-function utcISOToLocalDateTime(iso: string) {
+/** ISO UTC -> "YYYY-MM-DDTHH:mm" for <input type="datetime-local"> */
+export function utcISOToLocalDateTime(iso: string) {
   if (!iso) return ""
-  const d = new Date(iso)                           // this is the correct UTC instant
-  d.setMinutes(d.getMinutes() - d.getTimezoneOffset()) // shift to local clock time
-  return d.toISOString().slice(0, 16)
+  const d = new Date(iso) // this is the correct instant in time
+  const pad = (n: number) => String(n).padStart(2, "0")
+  const yyyy = d.getFullYear()
+  const mm = pad(d.getMonth() + 1)
+  const dd = pad(d.getDate())
+  const hh = pad(d.getHours())      // <-- local hours
+  const mi = pad(d.getMinutes())    // <-- local minutes
+  return `${yyyy}-${mm}-${dd}T${hh}:${mi}`
 }
 
-/** value from <input type="datetime-local"> -> ISO (UTC) to store */
-function localDateTimeToUTCISO(local: string) {
+/** "YYYY-MM-DDTHH:mm" (local) -> ISO UTC string to store */
+export function localDateTimeToUTCISO(local: string) {
   if (!local) return ""
-  const [date, time] = local.split("T")
-  if (!date || !time) return ""
-  const [y, m, d] = date.split("-").map(Number)
-  const [hh, mm] = time.split(":").map(Number)
-  // Create a *local* time; toISOString() converts to the correct UTC instant.
-  return new Date(y, (m ?? 1) - 1, d ?? 1, hh ?? 0, mm ?? 0, 0, 0).toISOString()
+  // new Date("YYYY-MM-DDTHH:mm") is treated as LOCAL time by browsers
+  return new Date(local).toISOString()
 }
+
 
 
 /* -------------------- Page -------------------- */
