@@ -1,9 +1,8 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useMemo, useRef, useState } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
@@ -12,30 +11,14 @@ import { cn } from "@/lib/utils"
 
 /** -------------------- Constants & Types -------------------- */
 
-type ADHDAnswer =
-  | "Never"
-  | "Rarely"
-  | "Sometimes"
-  | "Often"
-  | "Very Often"
-
-type AQAnswer =
-  | "Strongly Disagree"
-  | "Slightly Disagree"
-  | "Slightly Agree"
-  | "Strongly Agree"
+type ADHDAnswer = "Never" | "Rarely" | "Sometimes" | "Often" | "Very Often"
+type AQAnswer = "Strongly Disagree" | "Slightly Disagree" | "Slightly Agree" | "Strongly Agree"
 
 // UI labels for the sliders
 const ADHD_UI_LABELS = ["Never", "Rarely", "Sometimes", "Often", "Constantly"] as const
 // Standard scoring labels (we map Constantly -> Very Often)
 const ADHD_SCORE_LABELS: ADHDAnswer[] = ["Never", "Rarely", "Sometimes", "Often", "Very Often"]
-
-const AQ_LABELS: AQAnswer[] = [
-  "Strongly Disagree",
-  "Slightly Disagree",
-  "Slightly Agree",
-  "Strongly Agree",
-]
+const AQ_LABELS: AQAnswer[] = ["Strongly Disagree", "Slightly Disagree", "Slightly Agree", "Strongly Agree"]
 
 // ASRS v1.1 Screener (Part A, 6 items)
 const ASRS_A_ITEMS = [
@@ -47,7 +30,7 @@ const ASRS_A_ITEMS = [
   "How often do you feel overly active and compelled to do things, like you were driven by a motor?",
 ]
 
-// Full 18 items (optional Part B, 7–18).
+// Full 18 items (optional Part B, 7–18)
 const ASRS_B_ITEMS = [
   "How often do you make careless mistakes when you have to work on a boring or difficult project?",
   "How often do you have difficulty keeping your attention when you are doing boring or repetitive work?",
@@ -80,9 +63,11 @@ const AQ10_ITEMS = [
 /** -------------------- Helpers -------------------- */
 
 // map ADHD slider index (0..4) to scoring text
-const idxToAdhdScoreLabel = (idx: number): ADHDAnswer => ADHD_SCORE_LABELS[Math.max(0, Math.min(4, idx))]
+const idxToAdhdScoreLabel = (idx: number): ADHDAnswer =>
+  ADHD_SCORE_LABELS[Math.max(0, Math.min(4, idx))]
 // map AQ slider index (0..3) to text
-const idxToAQLabel = (idx: number): AQAnswer => AQ_LABELS[Math.max(0, Math.min(3, idx))]
+const idxToAQLabel = (idx: number): AQAnswer =>
+  AQ_LABELS[Math.max(0, Math.min(3, idx))]
 
 /** -------------------- Scoring -------------------- */
 
@@ -152,12 +137,17 @@ function LikertSlider({
       />
       <div className="mt-1 flex justify-between text-[11px] text-muted-foreground">
         {labels.map((l, i) => (
-          <span key={i} className={cn("w-12 text-left", i === 0 ? "" : i === max ? "text-right" : "text-center")}>
+          <span
+            key={i}
+            className={cn("w-12 text-left", i === 0 ? "" : i === max ? "text-right" : "text-center")}
+          >
             {l}
           </span>
         ))}
       </div>
-      <div className="mt-1 text-xs">Selected: <span className="font-medium">{labels[value]}</span></div>
+      <div className="mt-1 text-xs">
+        Selected: <span className="font-medium">{labels[value]}</span>
+      </div>
     </div>
   )
 }
@@ -171,12 +161,11 @@ export default function ScreeningPage() {
   // store indices for sliders
   const [asrsAIdx, setAsrsAIdx] = useState<number[]>(Array(6).fill(0))   // 0..4
   const [asrsBIdx, setAsrsBIdx] = useState<number[]>(Array(12).fill(0))  // 0..4
-
   const [aq10Idx, setAq10Idx] = useState<number[]>(Array(10).fill(0))    // 0..3
 
-  const [email, setEmail] = useState("")
-  const [submitting, setSubmitting] = useState(false)
-  const [serverMsg, setServerMsg] = useState<string | null>(null)
+  // results panel
+  const [showResults, setShowResults] = useState(false)
+  const resultsRef = useRef<HTMLDivElement | null>(null)
 
   const asrsSummary = useMemo(() => {
     const a = scoreASRSPartAFromIdx(asrsAIdx)
@@ -186,56 +175,20 @@ export default function ScreeningPage() {
 
   const aqSummary = useMemo(() => scoreAQ10FromIdx(aq10Idx), [aq10Idx])
 
-  async function handleEmailResults() {
-    setServerMsg(null)
-    setSubmitting(true)
-    try {
-      const payload =
-        tool === "adhd"
-          ? {
-              tool: "ASRS-v1.1",
-              email,
-              answers: {
-                // send standardized scoring labels (Constantly -> Very Often)
-                partA: asrsAIdx.map((i) => idxToAdhdScoreLabel(i)),
-                partB: showPartB ? asrsBIdx.map((i) => idxToAdhdScoreLabel(i)) : undefined,
-              },
-              scores: {
-                partA_positiveCount: asrsSummary.positiveCount,
-                partA_positiveScreen: asrsSummary.isPositiveScreen,
-                broad_total: asrsSummary.broad.total,
-                broad_pct: asrsSummary.broad.pct,
-              },
-              interpretation: asrsSummary.isPositiveScreen
-                ? "Your Part A result meets the commonly used threshold for a positive ADHD screen. This is not a diagnosis—consider speaking with a clinician."
-                : "Your Part A result does not meet the common positive screen threshold. If you still have concerns, consider talking with a clinician.",
-            }
-          : {
-              tool: "AQ-10",
-              email,
-              answers: aq10Idx.map((i) => idxToAQLabel(i)),
-              scores: {
-                aq10_score: aqSummary.score,
-                aq10_thresholdReached: aqSummary.thresholdReached,
-              },
-              interpretation: aqSummary.thresholdReached
-                ? "Your AQ-10 score meets a common threshold suggesting further assessment for autistic traits may be helpful. This is not a diagnosis."
-                : "Your AQ-10 score is below the common threshold. If you still have concerns, consider a conversation with a clinician.",
-            }
+  const adhdSeverity =
+    asrsSummary.positiveCount >= 4 ? "High (positive screen)"
+      : asrsSummary.positiveCount >= 2 ? "Borderline / Mixed"
+      : "Low"
 
-      const res = await fetch("/api/screening/submit", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      })
-      const j = await res.json()
-      if (!res.ok) throw new Error(j.error || "Failed to submit")
-      setServerMsg(j.message || "Saved and (if enabled) emailed.")
-    } catch (e: any) {
-      setServerMsg(e.message || "Something went wrong.")
-    } finally {
-      setSubmitting(false)
-    }
+  const autismSeverity =
+    aqSummary.score >= 6 ? "High (meets common threshold)"
+      : aqSummary.score >= 4 ? "Borderline / Mixed"
+      : "Low"
+
+  function openResults() {
+    setShowResults(true)
+    // scroll the results into view for better UX
+    setTimeout(() => resultsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 0)
   }
 
   return (
@@ -277,7 +230,9 @@ export default function ScreeningPage() {
 
                 {ASRS_A_ITEMS.map((q, i) => (
                   <div key={i} className="space-y-2">
-                    <Label className="text-sm">{i + 1}. {q}</Label>
+                    <Label className="text-sm">
+                      {i + 1}. {q}
+                    </Label>
                     <LikertSlider
                       value={asrsAIdx[i]}
                       onChange={(v) => {
@@ -311,7 +266,9 @@ export default function ScreeningPage() {
                   <h3 className="font-semibold">ASRS – Additional Items (7–18)</h3>
                   {ASRS_B_ITEMS.map((q, i) => (
                     <div key={i} className="space-y-2">
-                      <Label className="text-sm">{i + 7}. {q}</Label>
+                      <Label className="text-sm">
+                        {i + 7}. {q}
+                      </Label>
                       <LikertSlider
                         value={asrsBIdx[i]}
                         onChange={(v) => {
@@ -324,7 +281,8 @@ export default function ScreeningPage() {
                     </div>
                   ))}
                   <div className="text-xs text-muted-foreground">
-                    Broad severity (informal): {scoreASRSBroadFromIdx([...asrsAIdx, ...asrsBIdx]).total} / 72 ({scoreASRSBroadFromIdx([...asrsAIdx, ...asrsBIdx]).pct}%)
+                    Broad severity (informal): {scoreASRSBroadFromIdx([...asrsAIdx, ...asrsBIdx]).total} / 72 (
+                    {scoreASRSBroadFromIdx([...asrsAIdx, ...asrsBIdx]).pct}%)
                   </div>
                 </CardContent>
               </Card>
@@ -344,7 +302,9 @@ export default function ScreeningPage() {
 
                 {AQ10_ITEMS.map((it, i) => (
                   <div key={i} className="space-y-2">
-                    <Label className="text-sm">{i + 1}. {it.text}</Label>
+                    <Label className="text-sm">
+                      {i + 1}. {it.text}
+                    </Label>
                     <LikertSlider
                       value={aq10Idx[i]}
                       onChange={(v) => {
@@ -365,36 +325,127 @@ export default function ScreeningPage() {
           </TabsContent>
         </Tabs>
 
-        {/* Email capture + send */}
-        <Card>
-          <CardContent className="pt-6 space-y-3">
-            <h3 className="font-semibold">Email me my results</h3>
-            <p className="text-sm text-muted-foreground">
-              We’ll include your selected answers, the calculated score, and a friendly reminder that this is not a diagnosis.
-            </p>
-            <div className="flex gap-2">
-              <Input
-                type="email"
-                placeholder="you@example.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-              />
-              <Button
-                disabled={!email || submitting}
-                onClick={handleEmailResults}
-              >
-                {submitting ? "Sending…" : "Send results"}
-              </Button>
-            </div>
-            {serverMsg && <p className="text-sm">{serverMsg}</p>}
-          </CardContent>
-        </Card>
+        {/* Check Results (no email) */}
+        <div className="flex justify-end">
+          <Button onClick={openResults}>Check results</Button>
+        </div>
 
-        {/* Footer reminder */}
-        <p className="text-xs text-muted-foreground">
-          These tools are for informational purposes only and cannot diagnose any condition. If these results resonate,
-          consider contacting your GP or a licensed clinician for a full assessment.
-        </p>
+        {/* Results Panel */}
+        {showResults && (
+          <Card ref={resultsRef}>
+            <CardContent className="pt-6 space-y-4">
+              <h3 className="text-lg font-semibold">Your Results (informational only)</h3>
+
+              {tool === "adhd" ? (
+                <>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant={asrsSummary.isPositiveScreen ? "destructive" : "secondary"}>
+                      Part A: {asrsSummary.positiveCount}/6
+                    </Badge>
+                    <Badge>{adhdSeverity}</Badge>
+                    {showPartB && (
+                      <Badge variant="outline">
+                        Broad: {asrsSummary.broad.total}/72 ({asrsSummary.broad.pct}%)
+                      </Badge>
+                    )}
+                  </div>
+
+                  <p className="text-sm">
+                    {asrsSummary.isPositiveScreen
+                      ? "Your Part A result meets a commonly used positive ADHD screen. This is not a diagnosis—consider speaking with a clinician."
+                      : "Your Part A result does not meet the common threshold for a positive screen. If this still resonates with your lived experience, consider talking with a clinician."}
+                  </p>
+
+                  {/* Next steps */}
+                  <div className="space-y-2">
+                    <h4 className="font-medium">Next steps</h4>
+                    <ul className="list-disc pl-5 text-sm space-y-1">
+                      <li>Book an appointment with your GP and bring examples of how these traits impact work, study, and relationships.</li>
+                      <li>
+                        UK option: explore{" "}
+                        <a
+                          href="https://adhduk.co.uk/right-to-choose/"
+                          target="_blank"
+                          rel="noreferrer"
+                          className="underline"
+                        >
+                          Right to Choose (ADHD UK)
+                        </a>{" "}
+                        to understand referral routes and waiting times.
+                      </li>
+                      <li>Keep a brief symptom journal for 2–4 weeks (situations, impact, strategies that help).</li>
+                      <li>If possible, ask a trusted person (partner, parent, friend) to write a brief perspective letter.</li>
+                    </ul>
+                  </div>
+
+                  {/* Helpful links */}
+                  <div className="space-y-2">
+                    <h4 className="font-medium">Helpful links</h4>
+                    <ul className="list-disc pl-5 text-sm space-y-1">
+                      <li>
+                        <a href="https://adhduk.co.uk/right-to-choose/" target="_blank" rel="noreferrer" className="underline">
+                          ADHD UK – Right to Choose
+                        </a>
+                      </li>
+                      <li>
+                        <a href="https://www.nhs.uk/conditions/attention-deficit-hyperactivity-disorder-adhd/" target="_blank" rel="noreferrer" className="underline">
+                          NHS — ADHD overview
+                        </a>
+                      </li>
+                    </ul>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant={aqSummary.thresholdReached ? "destructive" : "secondary"}>
+                      AQ-10: {aqSummary.score}/10
+                    </Badge>
+                    <Badge>{autismSeverity}</Badge>
+                  </div>
+
+                  <p className="text-sm">
+                    {aqSummary.thresholdReached
+                      ? "Your AQ-10 score meets a commonly used threshold suggesting further assessment for autistic traits may be helpful. This is not a diagnosis."
+                      : "Your AQ-10 score is below the common threshold. If this still resonates with your lived experience, consider talking with a clinician."}
+                  </p>
+
+                  {/* Next steps */}
+                  <div className="space-y-2">
+                    <h4 className="font-medium">Next steps</h4>
+                    <ul className="list-disc pl-5 text-sm space-y-1">
+                      <li>Speak with your GP about an autism assessment. Bring concrete examples from school, work, and social settings.</li>
+                      <li>Note sensory differences (e.g., sound, light, touch) and any routines/sameness that support you.</li>
+                      <li>If comfortable, gather input from someone who knows you well (childhood and adulthood examples can help).</li>
+                    </ul>
+                  </div>
+
+                  {/* Helpful links */}
+                  <div className="space-y-2">
+                    <h4 className="font-medium">Helpful links</h4>
+                    <ul className="list-disc pl-5 text-sm space-y-1">
+                      <li>
+                        <a href="https://www.autism.org.uk/" target="_blank" rel="noreferrer" className="underline">
+                          National Autistic Society (UK)
+                        </a>
+                      </li>
+                      <li>
+                        <a href="https://www.nhs.uk/conditions/autism/" target="_blank" rel="noreferrer" className="underline">
+                          NHS — Autism overview
+                        </a>
+                      </li>
+                    </ul>
+                  </div>
+                </>
+              )}
+
+              <p className="text-xs text-muted-foreground">
+                Reminder: These tools are for information only and cannot diagnose any condition. A qualified clinician
+                will consider your history, context, and other factors in a full assessment.
+              </p>
+            </CardContent>
+          </Card>
+        )}
       </div>
     </div>
   )
