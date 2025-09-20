@@ -39,6 +39,7 @@ import { createClient } from "@/lib/supabase/client"
 import type { User } from "@supabase/supabase-js"
 import { removeByPublicUrl } from "@/lib/storage"
 import { enableAlarmAudio, isAlarmReady, playAlarmLoop, stopAlarm } from "@/components/alarm-sounder"
+import { AddressAutocomplete } from "@/components/address-autocomplete"
 
 /* -------------------- Types -------------------- */
 
@@ -77,7 +78,7 @@ export function utcISOToLocalDateTime(iso: string) {
 export function localDateTimeToUTCISO(local: string) {
   if (!local) return ""
   // new Date("YYYY-MM-DDTHH:mm") is interpreted in the browser's local timezone.
-  // toISOString() converts that instant to UTC. No extra " UTC" suffix.
+  // toISOString() converts that instant to UTC.
   return new Date(local).toISOString()
 }
 
@@ -788,6 +789,7 @@ function AppointmentForm({
     appointment?.image_url ? { file: new File([], "existing"), preview: appointment.image_url } : null,
   )
   const [voiceRecording, setVoiceRecording] = useState<{ blob: Blob; duration: number } | null>(null)
+  const [pickedPlace, setPickedPlace] = useState<{ lat: number; lng: number; name: string } | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
 
@@ -796,7 +798,7 @@ function AppointmentForm({
   const geocodeAddress = async (q: string) => {
     const r = await fetch(`/api/geocode?q=${encodeURIComponent(q)}`, { cache: "no-store" })
     if (!r.ok) throw new Error((await r.json()).error || "Failed to geocode")
-    return (await r.json()) as { latitude: number; longitude: number; name: string }
+    return (await r.json()) as { latitude: number; longitude: number; name: string; address?: string }
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -806,25 +808,29 @@ function AppointmentForm({
     setFormError(null)
 
     try {
-      // 1) Coordinates (optional)
+      // 1) Coordinates (optional) — resolve in order: pickedPlace > typed address > device location
       let latitude: number | null = appointment?.latitude ?? null
       let longitude: number | null = appointment?.longitude ?? null
 
-      if (latitude == null || longitude == null) {
-        if (formData.address.trim()) {
-          const g = await geocodeAddress(formData.address.trim())
-          latitude = g.latitude
-          longitude = g.longitude
-          if (!formData.location_name) {
-            setFormData((p) => ({ ...p, location_name: g.name }))
-          }
-        } else if (userLocation) {
-          latitude = userLocation.lat
-          longitude = userLocation.lng
-        } else {
-          latitude = null
-          longitude = null
+      if (pickedPlace) {
+        latitude = pickedPlace.lat
+        longitude = pickedPlace.lng
+        if (!formData.location_name) {
+          setFormData((p) => ({ ...p, location_name: pickedPlace.name }))
         }
+      } else if (formData.address.trim()) {
+        const g = await geocodeAddress(formData.address.trim())
+        latitude = g.latitude
+        longitude = g.longitude
+        if (!formData.location_name) {
+          setFormData((p) => ({ ...p, location_name: g.name }))
+        }
+      } else if (userLocation) {
+        latitude = userLocation.lat
+        longitude = userLocation.lng
+      } else {
+        latitude = null
+        longitude = null
       }
 
       // 2) Media (optional)
@@ -866,7 +872,7 @@ function AppointmentForm({
       if (scheduled_at) {
         payload.scheduled_at = scheduled_at
         payload.schedule_timezone = schedule_timezone
-        payload.time_alert_sent = false
+        payload.time_alert_sent = false // reset on change
       }
 
       if (appointment) {
@@ -929,18 +935,29 @@ function AppointmentForm({
         />
       </div>
 
-      {/* Address (optional) */}
+      {/* Address (optional) with autocomplete */}
       {!appointment && (
         <div>
           <Label htmlFor="address">Address (optional)</Label>
-          <Input
-            id="address"
+          <AddressAutocomplete
             value={formData.address}
-            onChange={(e) => setFormData((p) => ({ ...p, address: e.target.value }))}
-            placeholder="123 High St, City"
+            onValueChange={(v) => {
+              setFormData((p) => ({ ...p, address: v }))
+              setPickedPlace(null) // reset if user edits after picking
+            }}
+            userLocation={userLocation || null}
+            onPick={(place) => {
+              setPickedPlace({ lat: place.latitude, lng: place.longitude, name: place.name })
+              setFormData((p) => ({
+                ...p,
+                address: place.address,
+                location_name: p.location_name || place.name,
+              }))
+            }}
+            placeholder="Start typing an address or place…"
           />
           <p className="text-xs text-muted-foreground mt-1">
-            If empty, we’ll try your current location. If neither is available, we’ll still save (no geofence yet).
+            Suggestions are biased to your current area.
           </p>
         </div>
       )}
