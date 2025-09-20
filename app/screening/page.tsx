@@ -5,18 +5,37 @@ import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
+import { Slider } from "@/components/ui/slider"
 import { cn } from "@/lib/utils"
 
 /** -------------------- Constants & Types -------------------- */
 
-type ADHDAnswer = "Never" | "Rarely" | "Sometimes" | "Often" | "Very Often"
-type AQAnswer = "Definitely Agree" | "Slightly Agree" | "Slightly Disagree" | "Definitely Disagree"
+type ADHDAnswer =
+  | "Never"
+  | "Rarely"
+  | "Sometimes"
+  | "Often"
+  | "Very Often"
 
-const ADHD_SCALE: ADHDAnswer[] = ["Never","Rarely","Sometimes","Often","Very Often"]
-const AQ_SCALE: AQAnswer[] = ["Definitely Agree","Slightly Agree","Slightly Disagree","Definitely Disagree"]
+type AQAnswer =
+  | "Strongly Disagree"
+  | "Slightly Disagree"
+  | "Slightly Agree"
+  | "Strongly Agree"
+
+// UI labels for the sliders
+const ADHD_UI_LABELS = ["Never", "Rarely", "Sometimes", "Often", "Constantly"] as const
+// Standard scoring labels (we map Constantly -> Very Often)
+const ADHD_SCORE_LABELS: ADHDAnswer[] = ["Never", "Rarely", "Sometimes", "Often", "Very Often"]
+
+const AQ_LABELS: AQAnswer[] = [
+  "Strongly Disagree",
+  "Slightly Disagree",
+  "Slightly Agree",
+  "Strongly Agree",
+]
 
 // ASRS v1.1 Screener (Part A, 6 items)
 const ASRS_A_ITEMS = [
@@ -28,7 +47,7 @@ const ASRS_A_ITEMS = [
   "How often do you feel overly active and compelled to do things, like you were driven by a motor?",
 ]
 
-// Full 18 items (optional Part B, 7–18). Keep it compact but complete.
+// Full 18 items (optional Part B, 7–18).
 const ASRS_B_ITEMS = [
   "How often do you make careless mistakes when you have to work on a boring or difficult project?",
   "How often do you have difficulty keeping your attention when you are doing boring or repetitive work?",
@@ -46,32 +65,37 @@ const ASRS_B_ITEMS = [
 
 // AQ-10 (adult quick screen)
 const AQ10_ITEMS = [
-  { text: "I often notice small sounds when others do not.", keyAgree = true },
-  { text: "I usually concentrate more on the whole picture, rather than the small details.", keyAgree = false }, // reverse
-  { text: "I find it easy to do more than one thing at once.", keyAgree = false }, // reverse
-  { text: "If there is an interruption, I can switch back to what I was doing very quickly.", keyAgree = false }, // reverse
-  { text: "I find it easy to ‘read between the lines’ when someone is talking to me.", keyAgree = false }, // reverse
-  { text: "I know how to tell if someone listening to me is getting bored.", keyAgree = false }, // reverse
-  { text: "When I’m reading a story I find it difficult to work out the characters’ intentions.", keyAgree = true },
-  { text: "I like to collect information about categories of things (e.g., types of cars, birds, trains, plants).", keyAgree = true },
-  { text: "I find it easy to work out what someone is thinking or feeling just by looking at their face.", keyAgree = false }, // reverse
-  { text: "I find it difficult to work out people’s intentions.", keyAgree = true },
+  { text: "I often notice small sounds when others do not.", keyAgree: true },
+  { text: "I usually concentrate more on the whole picture, rather than the small details.", keyAgree: false }, // reverse
+  { text: "I find it easy to do more than one thing at once.", keyAgree: false }, // reverse
+  { text: "If there is an interruption, I can switch back to what I was doing very quickly.", keyAgree: false }, // reverse
+  { text: "I find it easy to ‘read between the lines’ when someone is talking to me.", keyAgree: false }, // reverse
+  { text: "I know how to tell if someone listening to me is getting bored.", keyAgree: false }, // reverse
+  { text: "When I’m reading a story I find it difficult to work out the characters’ intentions.", keyAgree: true },
+  { text: "I like to collect information about categories of things (e.g., types of cars, birds, trains, plants).", keyAgree: true },
+  { text: "I find it easy to work out what someone is thinking or feeling just by looking at their face.", keyAgree: false }, // reverse
+  { text: "I find it difficult to work out people’s intentions.", keyAgree: true },
 ] as const
 
-type AQ10Item = typeof AQ10_ITEMS[number]
+/** -------------------- Helpers -------------------- */
 
-/** -------------------- Scoring Helpers -------------------- */
+// map ADHD slider index (0..4) to scoring text
+const idxToAdhdScoreLabel = (idx: number): ADHDAnswer => ADHD_SCORE_LABELS[Math.max(0, Math.min(4, idx))]
+// map AQ slider index (0..3) to text
+const idxToAQLabel = (idx: number): AQAnswer => AQ_LABELS[Math.max(0, Math.min(3, idx))]
 
-// ASRS Part A positive screen rule:
-// Q1-3, Q5-6 are positive if answer ∈ {Sometimes, Often, Very Often}
-// Q4 is positive if answer ∈ {Often, Very Often}
-function scoreASRSPartA(answers: ADHDAnswer[]) {
+/** -------------------- Scoring -------------------- */
+
+// ASRS Part A positive screen rule based on indices (0..4):
+// Q1-3,5-6 => positive if index >= 2 (Sometimes+)
+// Q4       => positive if index >= 3 (Often+)
+function scoreASRSPartAFromIdx(indices: number[]) {
   let positives = 0
-  answers.forEach((ans, idx) => {
+  indices.forEach((val, idx) => {
     if (idx === 3) {
-      if (ans === "Often" || ans === "Very Often") positives++
+      if (val >= 3) positives++
     } else {
-      if (ans === "Sometimes" || ans === "Often" || ans === "Very Often") positives++
+      if (val >= 2) positives++
     }
   })
   return {
@@ -80,28 +104,62 @@ function scoreASRSPartA(answers: ADHDAnswer[]) {
   }
 }
 
-// Optional “broad signal” across all 18 to show trend (NOT diagnostic)
-function scoreASRSBroad(all18: ADHDAnswer[]) {
-  const map = { "Never": 0, "Rarely": 1, "Sometimes": 2, "Often": 3, "Very Often": 4 } as const
-  const total = all18.reduce((s, a) => s + map[a], 0)
+// Optional broad signal across all 18 indices (0..4)
+function scoreASRSBroadFromIdx(all18: number[]) {
+  const total = all18.reduce((s, v) => s + v, 0) // 0..72
   const max = 18 * 4
   const pct = Math.round((total / max) * 100)
   return { total, pct }
 }
 
 // AQ-10 scoring: 1 point if response matches “key” direction
-function scoreAQ10(answers: AQAnswer[]) {
-  const toAgree = (a: AQAnswer) => a === "Definitely Agree" || a === "Slightly Agree"
-  const toDisagree = (a: AQAnswer) => a === "Definitely Disagree" || a === "Slightly Disagree"
+// Our slider: 0..1 => Disagree; 2..3 => Agree
+function scoreAQ10FromIdx(indices: number[]) {
   let score = 0
-  answers.forEach((a, i) => {
+  indices.forEach((val, i) => {
     const keyedAgree = AQ10_ITEMS[i].keyAgree
-    if ((keyedAgree && toAgree(a)) || (!keyedAgree && toDisagree(a))) score++
+    const isAgree = val >= 2
+    const isDisagree = val <= 1
+    if ((keyedAgree && isAgree) || (!keyedAgree && isDisagree)) score++
   })
   return {
     score, // 0..10
-    thresholdReached: score >= 6, // commonly used cut-off
+    thresholdReached: score >= 6,
   }
+}
+
+/** -------------------- Reusable UI -------------------- */
+
+function LikertSlider({
+  value,
+  onChange,
+  labels,
+}: {
+  value: number
+  onChange: (v: number) => void
+  labels: readonly string[]
+}) {
+  const max = labels.length - 1
+  return (
+    <div>
+      <Slider
+        value={[value]}
+        min={0}
+        max={max}
+        step={1}
+        onValueChange={(v) => onChange(v[0])}
+        className="py-2"
+      />
+      <div className="mt-1 flex justify-between text-[11px] text-muted-foreground">
+        {labels.map((l, i) => (
+          <span key={i} className={cn("w-12 text-left", i === 0 ? "" : i === max ? "text-right" : "text-center")}>
+            {l}
+          </span>
+        ))}
+      </div>
+      <div className="mt-1 text-xs">Selected: <span className="font-medium">{labels[value]}</span></div>
+    </div>
+  )
 }
 
 /** -------------------- Page -------------------- */
@@ -110,22 +168,23 @@ export default function ScreeningPage() {
   const [tool, setTool] = useState<"adhd" | "autism">("adhd")
   const [showPartB, setShowPartB] = useState(false)
 
-  const [asrsA, setAsrsA] = useState<ADHDAnswer[]>(Array(6).fill("Never"))
-  const [asrsB, setAsrsB] = useState<ADHDAnswer[]>(Array(12).fill("Never"))
+  // store indices for sliders
+  const [asrsAIdx, setAsrsAIdx] = useState<number[]>(Array(6).fill(0))   // 0..4
+  const [asrsBIdx, setAsrsBIdx] = useState<number[]>(Array(12).fill(0))  // 0..4
 
-  const [aq10, setAq10] = useState<AQAnswer[]>(Array(10).fill("Definitely Disagree"))
+  const [aq10Idx, setAq10Idx] = useState<number[]>(Array(10).fill(0))    // 0..3
 
   const [email, setEmail] = useState("")
   const [submitting, setSubmitting] = useState(false)
   const [serverMsg, setServerMsg] = useState<string | null>(null)
 
   const asrsSummary = useMemo(() => {
-    const a = scoreASRSPartA(asrsA)
-    const broad = scoreASRSBroad([...asrsA, ...asrsB])
+    const a = scoreASRSPartAFromIdx(asrsAIdx)
+    const broad = scoreASRSBroadFromIdx([...asrsAIdx, ...asrsBIdx])
     return { ...a, broad }
-  }, [asrsA, asrsB])
+  }, [asrsAIdx, asrsBIdx])
 
-  const aqSummary = useMemo(() => scoreAQ10(aq10), [aq10])
+  const aqSummary = useMemo(() => scoreAQ10FromIdx(aq10Idx), [aq10Idx])
 
   async function handleEmailResults() {
     setServerMsg(null)
@@ -137,8 +196,9 @@ export default function ScreeningPage() {
               tool: "ASRS-v1.1",
               email,
               answers: {
-                partA: asrsA,
-                partB: showPartB ? asrsB : undefined,
+                // send standardized scoring labels (Constantly -> Very Often)
+                partA: asrsAIdx.map((i) => idxToAdhdScoreLabel(i)),
+                partB: showPartB ? asrsBIdx.map((i) => idxToAdhdScoreLabel(i)) : undefined,
               },
               scores: {
                 partA_positiveCount: asrsSummary.positiveCount,
@@ -153,7 +213,7 @@ export default function ScreeningPage() {
           : {
               tool: "AQ-10",
               email,
-              answers: aq10,
+              answers: aq10Idx.map((i) => idxToAQLabel(i)),
               scores: {
                 aq10_score: aqSummary.score,
                 aq10_thresholdReached: aqSummary.thresholdReached,
@@ -218,19 +278,15 @@ export default function ScreeningPage() {
                 {ASRS_A_ITEMS.map((q, i) => (
                   <div key={i} className="space-y-2">
                     <Label className="text-sm">{i + 1}. {q}</Label>
-                    <Select
-                      value={asrsA[i]}
-                      onValueChange={(v) => {
-                        const next = [...asrsA]
-                        next[i] = v as ADHDAnswer
-                        setAsrsA(next)
+                    <LikertSlider
+                      value={asrsAIdx[i]}
+                      onChange={(v) => {
+                        const next = [...asrsAIdx]
+                        next[i] = v
+                        setAsrsAIdx(next)
                       }}
-                    >
-                      <SelectTrigger><SelectValue placeholder="Pick an option" /></SelectTrigger>
-                      <SelectContent>
-                        {ADHD_SCALE.map((opt) => <SelectItem key={opt} value={opt}>{opt}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
+                      labels={ADHD_UI_LABELS}
+                    />
                   </div>
                 ))}
 
@@ -256,23 +312,19 @@ export default function ScreeningPage() {
                   {ASRS_B_ITEMS.map((q, i) => (
                     <div key={i} className="space-y-2">
                       <Label className="text-sm">{i + 7}. {q}</Label>
-                      <Select
-                        value={asrsB[i]}
-                        onValueChange={(v) => {
-                          const next = [...asrsB]
-                          next[i] = v as ADHDAnswer
-                          setAsrsB(next)
+                      <LikertSlider
+                        value={asrsBIdx[i]}
+                        onChange={(v) => {
+                          const next = [...asrsBIdx]
+                          next[i] = v
+                          setAsrsBIdx(next)
                         }}
-                      >
-                        <SelectTrigger><SelectValue placeholder="Pick an option" /></SelectTrigger>
-                        <SelectContent>
-                          {ADHD_SCALE.map((opt) => <SelectItem key={opt} value={opt}>{opt}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
+                        labels={ADHD_UI_LABELS}
+                      />
                     </div>
                   ))}
                   <div className="text-xs text-muted-foreground">
-                    Broad severity (informal): {asrsSummary.broad.total} / 72 ({asrsSummary.broad.pct}%)
+                    Broad severity (informal): {scoreASRSBroadFromIdx([...asrsAIdx, ...asrsBIdx]).total} / 72 ({scoreASRSBroadFromIdx([...asrsAIdx, ...asrsBIdx]).pct}%)
                   </div>
                 </CardContent>
               </Card>
@@ -293,19 +345,15 @@ export default function ScreeningPage() {
                 {AQ10_ITEMS.map((it, i) => (
                   <div key={i} className="space-y-2">
                     <Label className="text-sm">{i + 1}. {it.text}</Label>
-                    <Select
-                      value={aq10[i]}
-                      onValueChange={(v) => {
-                        const next = [...aq10]
-                        next[i] = v as AQAnswer
-                        setAq10(next)
+                    <LikertSlider
+                      value={aq10Idx[i]}
+                      onChange={(v) => {
+                        const next = [...aq10Idx]
+                        next[i] = v
+                        setAq10Idx(next)
                       }}
-                    >
-                      <SelectTrigger><SelectValue placeholder="Pick an option" /></SelectTrigger>
-                      <SelectContent>
-                        {AQ_SCALE.map((opt) => <SelectItem key={opt} value={opt}>{opt}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
+                      labels={AQ_LABELS}
+                    />
                   </div>
                 ))}
 
