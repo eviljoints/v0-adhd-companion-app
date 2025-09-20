@@ -66,24 +66,21 @@ interface Appointment {
 /* -------------------- Helpers -------------------- */
 
 /** ISO UTC -> "YYYY-MM-DDTHH:mm" for <input type="datetime-local"> */
+// For <input type="datetime-local"> value when editing an existing ISO
 export function utcISOToLocalDateTime(iso: string) {
   if (!iso) return ""
-  const d = new Date(iso) // this is the correct instant in time
+  const d = new Date(iso) // absolute moment
   const pad = (n: number) => String(n).padStart(2, "0")
-  const yyyy = d.getFullYear()
-  const mm = pad(d.getMonth() + 1)
-  const dd = pad(d.getDate())
-  const hh = pad(d.getHours())      // <-- local hours
-  const mi = pad(d.getMinutes())    // <-- local minutes
-  return `${yyyy}-${mm}-${dd}T${hh}:${mi}`
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
-/** "YYYY-MM-DDTHH:mm" (local) -> ISO UTC string to store */
+// Convert a datetime-local value back to UTC ISO for storage
 export function localDateTimeToUTCISO(local: string) {
   if (!local) return ""
-  // new Date("YYYY-MM-DDTHH:mm") is treated as LOCAL time by browsers
+  // 'YYYY-MM-DDTHH:mm' is parsed as local time by JS
   return new Date(local).toISOString()
 }
+
 
 
 
