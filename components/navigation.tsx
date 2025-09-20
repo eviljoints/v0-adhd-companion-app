@@ -25,7 +25,7 @@ const navigation = [
   { name: "Appointments", href: "/appointments", icon: MapPin },
   { name: "AI Coach", href: "/coach", icon: Brain },
   { name: "VIP Contacts", href: "/contacts", icon: Users },
-  { name : "screening", href: "/screening", icon: NotepadTextDashed }
+  { name : "screening", href: "/screening", icon: NotepadTextDashed },
   { name: "Settings", href: "/settings", icon: Settings },
 ]
 
