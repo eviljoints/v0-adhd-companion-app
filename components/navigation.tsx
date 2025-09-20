@@ -27,7 +27,7 @@ const navigation = [
   { name: "VIP Contacts", href: "/contacts", icon: Users },
   { name : "screening", href: "/screening", icon: NotepadTextDashed },
   { name: "Settings", href: "/settings", icon: Settings },
-  ( name: "calendar", href: "/calendar-sync", icon: Calendar),
+  { name: "calendar", href: "/calendar-sync", icon: Calendar }
 ]
 
 export function Navigation() {
