@@ -37,6 +37,7 @@ import { VoiceRecorder, VoiceNoteDisplay } from "@/components/voice-recorder"
 import { cn } from "@/lib/utils"
 import { createClient } from "@/lib/supabase/client"
 import type { User } from "@supabase/supabase-js"
+import { removeByPublicUrl } from "@/lib/storage"
 
 /* -------------------- Types -------------------- */
 
@@ -157,20 +158,53 @@ export default function AppointmentsPage() {
     }
   }, [])
 
-  const deleteAppointment = async (id: string) => {
-    if (!user) return
-    const { error } = await supabase.from("appointments").delete().eq("id", id).eq("user_id", user.id)
-    if (error) {
-      console.error("Error deleting appointment:", error)
-    } else {
-      setAppointments((prev) => prev.filter((apt) => apt.id !== id))
-      // Clear any timer
-      if (timeoutsRef.current[id]) {
-        clearTimeout(timeoutsRef.current[id])
-        delete timeoutsRef.current[id]
-      }
-    }
+  import { removeByPublicUrl } from "@/lib/storage"
+…
+const deleteAppointment = async (id: string) => {
+  if (!user) return
+  // optional UI confirm:
+  if (!window.confirm("Delete this reminder? This will also remove any attached image/voice note.")) return
+
+  const supabase = createClient()
+
+  // 1) fetch media URLs to clean up storage
+  const { data: row, error: selErr } = await supabase
+    .from("appointments")
+    .select("image_url, voice_note_url")
+    .eq("id", id)
+    .eq("user_id", user.id)
+    .single()
+
+  if (selErr) {
+    console.error("Fetch for delete failed:", selErr)
+    // you can continue; row might not exist
+  } else if (row) {
+    try { if (row.image_url) await removeByPublicUrl(row.image_url) } catch (e) { console.warn("Image delete:", e) }
+    try { if (row.voice_note_url) await removeByPublicUrl(row.voice_note_url) } catch (e) { console.warn("Voice delete:", e) }
   }
+
+  // 2) delete the DB row
+  const { error: delErr } = await supabase
+    .from("appointments")
+    .delete()
+    .eq("id", id)
+    .eq("user_id", user.id)
+
+  if (delErr) {
+    console.error("Error deleting appointment:", delErr)
+    return
+  }
+
+  // 3) update UI + clear any local timer
+  setAppointments(prev => prev.filter(apt => apt.id !== id))
+
+  // if you have timeoutsRef from your timer/alarms code:
+  if ((timeoutsRef as any)?.current?.[id]) {
+    clearTimeout(timeoutsRef.current[id] as number)
+    delete timeoutsRef.current[id]
+  }
+}
+
 
   // Optional device location
   useEffect(() => {
