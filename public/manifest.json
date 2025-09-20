@@ -1,26 +1,15 @@
 {
   "name": "ADHD Companion",
-  "short_name": "ADHD Companion",
-  "description": "Location-based reminders, AI coaching, and VIP contacts to help manage ADHD",
+  "short_name": "ADHD",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#ffffff",
-  "theme_color": "#3b82f6",
-  "orientation": "portrait-primary",
+  "background_color": "#0B1220",
+  "theme_color": "#0EA5E9",
+  "description": "Location & time reminders that fit ADHD rhythms.",
   "icons": [
-    {
-      "src": "/icon-192x192.jpg",
-      "sizes": "192x192",
-      "type": "image/png",
-      "purpose": "any maskable"
-    },
-    {
-      "src": "/icon-512x512.jpg",
-      "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "any maskable"
-    }
-  ],
-  "categories": ["productivity", "health", "lifestyle"],
-  "lang": "en-US"
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icons/maskable-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "/icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
 }

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -11,61 +11,177 @@ import { Separator } from "@/components/ui/separator"
 import { Bell, MapPin, Brain, Shield } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 
+type SettingsShape = {
+  notifications: {
+    appointments: boolean
+    coaching: boolean
+    contacts: boolean
+    email: boolean
+  }
+  location: {
+    enabled: boolean
+    accuracy: "low" | "medium" | "high"
+    background: boolean
+  }
+  ai: {
+    coaching_frequency: "hourly" | "daily" | "weekly" | "custom"
+    personality: "supportive" | "direct" | "gentle" | "energetic"
+    reminders: boolean
+  }
+  privacy: {
+    data_sharing: boolean
+    analytics: boolean
+    location_history: boolean
+  }
+}
+
+const DEFAULTS: SettingsShape = {
+  notifications: { appointments: true, coaching: true, contacts: true, email: false },
+  location: { enabled: true, accuracy: "high", background: false },
+  ai: { coaching_frequency: "daily", personality: "supportive", reminders: true },
+  privacy: { data_sharing: false, analytics: true, location_history: true },
+}
+
 export default function SettingsPage() {
   const router = useRouter()
+  const supabase = useMemo(() => createClient(), [])
   const [isLoading, setIsLoading] = useState(true)
-  const [settings, setSettings] = useState({
-    notifications: {
-      appointments: true,
-      coaching: true,
-      contacts: true,
-      email: false,
-    },
-    location: {
-      enabled: true,
-      accuracy: "high",
-      background: false,
-    },
-    ai: {
-      coaching_frequency: "daily",
-      personality: "supportive",
-      reminders: true,
-    },
-    privacy: {
-      data_sharing: false,
-      analytics: true,
-      location_history: true,
-    },
-  })
+  const [isSaving, setIsSaving] = useState(false)
+  const [settings, setSettings] = useState<SettingsShape>(DEFAULTS)
+  const [serverMsg, setServerMsg] = useState<string | null>(null)
+  const [userId, setUserId] = useState<string | null>(null)
 
+  // ---------- Auth + initial load ----------
   useEffect(() => {
-    const supabase = createClient()
-
-    const checkAuth = async () => {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser()
-
+    (async () => {
+      const { data } = await supabase.auth.getUser()
+      const user = data?.user
       if (!user) {
         router.push("/auth/login")
         return
       }
+      setUserId(user.id)
 
-      // In a real app, you'd load user settings from the database
+      // Try to load existing settings
+      const { data: row, error } = await supabase
+        .from("user_settings")
+        .select("data")
+        .eq("user_id", user.id)
+        .single()
+
+      if (!error && row?.data) {
+        setSettings({ ...DEFAULTS, ...row.data })
+      } else {
+        // create a local default; will persist on Save
+        setSettings(DEFAULTS)
+      }
       setIsLoading(false)
-    }
+    })()
+  }, [router, supabase])
 
-    checkAuth()
-  }, [router])
-
-  const updateSetting = (category: string, key: string, value: any) => {
+  // ---------- Helpers ----------
+  const updateSetting = <K1 extends keyof SettingsShape, K2 extends keyof SettingsShape[K1]>(
+    category: K1,
+    key: K2,
+    value: SettingsShape[K1][K2],
+  ) => {
     setSettings((prev) => ({
       ...prev,
       [category]: {
-        ...prev[category as keyof typeof prev],
+        ...prev[category],
         [key]: value,
       },
     }))
+  }
+
+  async function ensureNotificationPermission(): Promise<boolean> {
+    try {
+      if (typeof Notification === "undefined") return false
+      if (Notification.permission === "granted") return true
+      const res = await Notification.requestPermission()
+      // Optionally register service worker (if not already)
+      if ("serviceWorker" in navigator) {
+        try {
+          await navigator.serviceWorker.register("/sw.js")
+        } catch {}
+      }
+      return res === "granted"
+    } catch {
+      return false
+    }
+  }
+
+  async function ensureLocationPermission(): Promise<boolean> {
+    if (!("geolocation" in navigator)) return false
+    return new Promise((resolve) => {
+      navigator.geolocation.getCurrentPosition(
+        () => resolve(true),
+        () => resolve(false),
+        { enableHighAccuracy: true, timeout: 10000 },
+      )
+    })
+  }
+
+  async function onToggleNotifications(checked: boolean) {
+    // Ask for browser permission if turning on any push-like channels
+    if (checked) {
+      const ok = await ensureNotificationPermission()
+      if (!ok) {
+        setServerMsg("Notifications are blocked by the browser. Check site permissions.")
+      }
+    }
+  }
+
+  async function onToggleLocation(checked: boolean) {
+    if (checked) {
+      const ok = await ensureLocationPermission()
+      if (!ok) {
+        setServerMsg("Location permission denied. Enable it in your browser settings.")
+      }
+    }
+  }
+
+  async function handleSave() {
+    if (!userId) return
+    setIsSaving(true)
+    setServerMsg(null)
+    try {
+      const { error } = await supabase.from("user_settings").upsert(
+        {
+          user_id: userId,
+          data: settings,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "user_id" },
+      )
+      if (error) throw error
+      setServerMsg("Settings saved.")
+    } catch (e: any) {
+      setServerMsg(e?.message || "Failed to save settings.")
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  async function testNotification() {
+    const ok = await ensureNotificationPermission()
+    if (!ok) {
+      setServerMsg("Notifications are blocked by the browser.")
+      return
+    }
+    try {
+      const reg = await navigator.serviceWorker?.ready
+      if (reg?.showNotification) {
+        await reg.showNotification("ADHD Companion", {
+          body: "Test notification — if you see this, you’re set! 🎉",
+          tag: "test",
+        })
+      } else {
+        new Notification("ADHD Companion", { body: "Test notification — it works! 🎉", tag: "test" })
+      }
+    } catch {
+      setServerMsg("Could not show a notification (service worker/permissions?).")
+    }
   }
 
   if (isLoading) {
@@ -84,10 +200,22 @@ export default function SettingsPage() {
   return (
     <div className="md:pl-64">
       <div className="p-6 space-y-6">
-        <div>
-          <h1 className="text-3xl font-bold">Settings</h1>
-          <p className="text-muted-foreground">Customize your ADHD companion experience</p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold">Settings</h1>
+            <p className="text-muted-foreground">Customize your ADHD companion experience</p>
+          </div>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={testNotification}>Test push</Button>
+            <Button size="lg" onClick={handleSave} disabled={isSaving}>
+              {isSaving ? "Saving…" : "Save All Settings"}
+            </Button>
+          </div>
         </div>
+
+        {serverMsg && (
+          <div className="text-sm">{serverMsg}</div>
+        )}
 
         <div className="grid gap-6">
           {/* Notifications */}
@@ -107,7 +235,10 @@ export default function SettingsPage() {
                 </div>
                 <Switch
                   checked={settings.notifications.appointments}
-                  onCheckedChange={(checked) => updateSetting("notifications", "appointments", checked)}
+                  onCheckedChange={async (checked) => {
+                    updateSetting("notifications", "appointments", checked)
+                    await onToggleNotifications(checked)
+                  }}
                 />
               </div>
               <Separator />
@@ -118,7 +249,10 @@ export default function SettingsPage() {
                 </div>
                 <Switch
                   checked={settings.notifications.coaching}
-                  onCheckedChange={(checked) => updateSetting("notifications", "coaching", checked)}
+                  onCheckedChange={async (checked) => {
+                    updateSetting("notifications", "coaching", checked)
+                    await onToggleNotifications(checked)
+                  }}
                 />
               </div>
               <Separator />
@@ -129,7 +263,10 @@ export default function SettingsPage() {
                 </div>
                 <Switch
                   checked={settings.notifications.contacts}
-                  onCheckedChange={(checked) => updateSetting("notifications", "contacts", checked)}
+                  onCheckedChange={async (checked) => {
+                    updateSetting("notifications", "contacts", checked)
+                    await onToggleNotifications(checked)
+                  }}
                 />
               </div>
               <Separator />
@@ -163,7 +300,10 @@ export default function SettingsPage() {
                 </div>
                 <Switch
                   checked={settings.location.enabled}
-                  onCheckedChange={(checked) => updateSetting("location", "enabled", checked)}
+                  onCheckedChange={async (checked) => {
+                    updateSetting("location", "enabled", checked)
+                    await onToggleLocation(checked)
+                  }}
                 />
               </div>
               <Separator />
@@ -171,7 +311,9 @@ export default function SettingsPage() {
                 <Label>Location Accuracy</Label>
                 <Select
                   value={settings.location.accuracy}
-                  onValueChange={(value) => updateSetting("location", "accuracy", value)}
+                  onValueChange={(value: SettingsShape["location"]["accuracy"]) =>
+                    updateSetting("location", "accuracy", value)
+                  }
                 >
                   <SelectTrigger>
                     <SelectValue />
@@ -187,7 +329,9 @@ export default function SettingsPage() {
               <div className="flex items-center justify-between">
                 <div className="space-y-0.5">
                   <Label>Background Location</Label>
-                  <p className="text-sm text-muted-foreground">Allow location access when app is closed</p>
+                  <p className="text-sm text-muted-foreground">
+                    Allow location checks while the app is in the background (browser support varies)
+                  </p>
                 </div>
                 <Switch
                   checked={settings.location.background}
@@ -211,7 +355,9 @@ export default function SettingsPage() {
                 <Label>Coaching Frequency</Label>
                 <Select
                   value={settings.ai.coaching_frequency}
-                  onValueChange={(value) => updateSetting("ai", "coaching_frequency", value)}
+                  onValueChange={(value: SettingsShape["ai"]["coaching_frequency"]) =>
+                    updateSetting("ai", "coaching_frequency", value)
+                  }
                 >
                   <SelectTrigger>
                     <SelectValue />
@@ -229,16 +375,18 @@ export default function SettingsPage() {
                 <Label>AI Personality</Label>
                 <Select
                   value={settings.ai.personality}
-                  onValueChange={(value) => updateSetting("ai", "personality", value)}
+                  onValueChange={(value: SettingsShape["ai"]["personality"]) =>
+                    updateSetting("ai", "personality", value)
+                  }
                 >
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="supportive">Supportive & Encouraging</SelectItem>
-                    <SelectItem value="direct">Direct & Practical</SelectItem>
-                    <SelectItem value="gentle">Gentle & Understanding</SelectItem>
-                    <SelectItem value="energetic">Energetic & Motivating</SelectItem>
+                    <SelectItem value="supportive">Supportive &amp; Encouraging</SelectItem>
+                    <SelectItem value="direct">Direct &amp; Practical</SelectItem>
+                    <SelectItem value="gentle">Gentle &amp; Understanding</SelectItem>
+                    <SelectItem value="energetic">Energetic &amp; Motivating</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -261,7 +409,7 @@ export default function SettingsPage() {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Shield className="h-5 w-5" />
-                Privacy & Data
+                Privacy &amp; Data
               </CardTitle>
               <CardDescription>Control how your data is used and shared</CardDescription>
             </CardHeader>
@@ -300,11 +448,6 @@ export default function SettingsPage() {
               </div>
             </CardContent>
           </Card>
-
-          {/* Save Button */}
-          <div className="flex justify-end">
-            <Button size="lg">Save All Settings</Button>
-          </div>
         </div>
       </div>
     </div>
