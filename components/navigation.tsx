@@ -15,7 +15,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { Home, MapPin, Brain, Users, Settings, Menu, Bell, LogOut, User } from "lucide-react"
+import { Home, MapPin, Brain, Users, Settings, Menu, Bell, LogOut, User, NotepadTextDashed } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { createClient } from "@/lib/supabase/client"
 import type { User as SupabaseUser } from "@supabase/supabase-js"
@@ -25,6 +25,7 @@ const navigation = [
   { name: "Appointments", href: "/appointments", icon: MapPin },
   { name: "AI Coach", href: "/coach", icon: Brain },
   { name: "VIP Contacts", href: "/contacts", icon: Users },
+  { name : "screening", href: "/screening", icon: NotepadTextDashed }
   { name: "Settings", href: "/settings", icon: Settings },
 ]
 
