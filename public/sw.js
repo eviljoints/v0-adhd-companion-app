@@ -1,5 +1,3 @@
-/* public/sw.js */
-
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (event) => {
   event.waitUntil(self.clients.claim());
@@ -16,17 +14,17 @@ self.addEventListener("push", (event) => {
   const notifData = data.data || {};
 
   event.waitUntil((async () => {
-    // Show notification
+    // Show OS notification (plays system sound/vibrate)
     await self.registration.showNotification(title, {
       body,
       tag,
       data: notifData,
-      // NOTE: Web Notifications do not support custom sounds cross-browser
-      // The OS may play its default sound.
-      requireInteraction: false,
+      requireInteraction: true,       // keep visible until user interacts
+      renotify: true,
+      vibrate: [200, 100, 200, 100, 400], // where supported
     });
 
-    // Ask any open pages to play a local sound
+    // Ask any open pages to play a local loud sound (WebAudio)
     const clients = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
     for (const client of clients) {
       client.postMessage({ type: "play-sound" });
@@ -41,12 +39,10 @@ self.addEventListener("notificationclick", (event) => {
     const allClients = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
     for (const client of allClients) {
       if ("focus" in client) {
-        // If the app is already open, focus it
-        client.postMessage({ type: "play-sound" }); // optional second chime on click
+        client.postMessage({ type: "play-sound" }); // optional chime on click
         return client.focus();
       }
     }
-    // Otherwise open a new window
     return self.clients.openWindow(url);
   })());
 });

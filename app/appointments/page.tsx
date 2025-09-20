@@ -1,8 +1,7 @@
-// app/appointments/page.tsx
 "use client"
 
 import type React from "react"
-import { useState, useEffect, useRef } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
@@ -39,6 +38,7 @@ import { cn } from "@/lib/utils"
 import { createClient } from "@/lib/supabase/client"
 import type { User } from "@supabase/supabase-js"
 import { removeByPublicUrl } from "@/lib/storage"
+import { enableAlarmAudio, isAlarmReady, playAlarmLoop, stopAlarm } from "@/components/alarm-sounder"
 
 /* -------------------- Types -------------------- */
 
@@ -65,24 +65,21 @@ interface Appointment {
 
 /* -------------------- Helpers -------------------- */
 
-/** ISO UTC -> "YYYY-MM-DDTHH:mm" for <input type="datetime-local"> */
-// For <input type="datetime-local"> value when editing an existing ISO
+/** ISO (UTC) -> "YYYY-MM-DDTHH:mm" for <input type="datetime-local"> */
 export function utcISOToLocalDateTime(iso: string) {
   if (!iso) return ""
-  const d = new Date(iso) // absolute moment
+  const d = new Date(iso) // exact instant
   const pad = (n: number) => String(n).padStart(2, "0")
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
-// Convert a datetime-local value back to UTC ISO for storage
+/** "YYYY-MM-DDTHH:mm" (local wall time) -> UTC ISO string */
 export function localDateTimeToUTCISO(local: string) {
   if (!local) return ""
-  // 'YYYY-MM-DDTHH:mm' is parsed as local time by JS
+  // new Date("YYYY-MM-DDTHH:mm") is interpreted in the browser's local timezone.
+  // toISOString() converts that instant to UTC. No extra " UTC" suffix.
   return new Date(local).toISOString()
 }
-
-
-
 
 /* -------------------- Page -------------------- */
 
@@ -96,7 +93,7 @@ export default function AppointmentsPage() {
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null)
   const [locationPermission, setLocationPermission] = useState<"granted" | "denied" | "prompt">("prompt")
 
-  // Track scheduled timeouts so we can clear/reschedule
+  // scheduled timeouts (time alarms)
   const timeoutsRef = useRef<Record<string, number>>({})
   const notificationServiceRef = useRef<LocationNotificationService | null>(null)
 
@@ -107,15 +104,12 @@ export default function AppointmentsPage() {
       const {
         data: { user },
       } = await supabase.auth.getUser()
-
       if (!user) {
         router.push("/auth/login")
         return
       }
-
       setUser(user)
       await loadAppointments(user.id)
-
       notificationServiceRef.current = new LocationNotificationService(user)
     }
 
@@ -136,7 +130,7 @@ export default function AppointmentsPage() {
       const rows = (data || []) as Appointment[]
       setAppointments(rows)
 
-      // Start geofencing only for items that have coordinates & if Notification permission granted
+      // start geofencing if we have permission and coords
       if (
         notificationServiceRef.current &&
         typeof Notification !== "undefined" &&
@@ -146,18 +140,30 @@ export default function AppointmentsPage() {
         notificationServiceRef.current.startWatching(toWatch)
       }
 
-      // (Re)schedule time-based alarms
+      // schedule time-based alarms
       scheduleTimeAlarms(rows)
     }
     setIsLoading(false)
   }
 
   useEffect(() => {
+    // cleanup on unmount
     return () => {
       notificationServiceRef.current?.stopWatching()
-      // clear all timeouts
       Object.values(timeoutsRef.current).forEach((id) => clearTimeout(id))
     }
+  }, [])
+
+  // Receive "play-sound" messages from the Service Worker on push
+  useEffect(() => {
+    if (!("serviceWorker" in navigator)) return
+    const handler = (event: MessageEvent) => {
+      if (event.data?.type === "play-sound" && isAlarmReady()) {
+        playAlarmLoop({ durationMs: 20000, cycles: 4 })
+      }
+    }
+    navigator.serviceWorker.addEventListener("message", handler)
+    return () => navigator.serviceWorker.removeEventListener("message", handler)
   }, [])
 
   /** Delete a reminder + clean up media + clear timers */
@@ -165,7 +171,7 @@ export default function AppointmentsPage() {
     if (!user) return
     if (!window.confirm("Delete this reminder? This will also remove any attached image/voice note.")) return
 
-    // 1) delete the DB row
+    // delete row
     const { error: delErr } = await supabase
       .from("appointments")
       .delete()
@@ -177,28 +183,20 @@ export default function AppointmentsPage() {
       return
     }
 
-    // 2) update UI
+    // update UI
     setAppointments((prev) => prev.filter((a) => a.id !== apt.id))
 
-    // 3) clear any local timer
+    // clear local timer if present
     if (timeoutsRef.current[apt.id]) {
       clearTimeout(timeoutsRef.current[apt.id])
       delete timeoutsRef.current[apt.id]
     }
 
-    // 4) storage cleanup (best effort)
-    try {
-      if (apt.image_url) await removeByPublicUrl(apt.image_url)
-    } catch (e) {
-      console.warn("Image delete:", e)
-    }
-    try {
-      if (apt.voice_note_url) await removeByPublicUrl(apt.voice_note_url)
-    } catch (e) {
-      console.warn("Voice delete:", e)
-    }
+    // storage cleanup best-effort
+    try { if (apt.image_url) await removeByPublicUrl(apt.image_url) } catch (e) { console.warn("Image delete:", e) }
+    try { if (apt.voice_note_url) await removeByPublicUrl(apt.voice_note_url) } catch (e) { console.warn("Voice delete:", e) }
 
-    // 5) restart geofencing watchers for remaining active items
+    // restart geofence for remaining
     if (
       notificationServiceRef.current &&
       typeof Notification !== "undefined" &&
@@ -211,7 +209,7 @@ export default function AppointmentsPage() {
     }
   }
 
-  // Optional device location
+  // Optional device location (used for distance badge)
   useEffect(() => {
     if ("geolocation" in navigator) {
       navigator.geolocation.getCurrentPosition(
@@ -275,7 +273,7 @@ export default function AppointmentsPage() {
         notificationServiceRef.current.startWatching(toWatch)
       }
 
-      // reschedule alarms
+      // reschedule time alarms
       scheduleTimeAlarms(next)
     }
   }
@@ -285,12 +283,17 @@ export default function AppointmentsPage() {
   const showAlarm = async (apt: Appointment) => {
     const title = apt.title || "Reminder"
     const body = apt.location_name ? `${apt.location_name}` : "Time’s up!"
+
+    // Native notification (even in background)
     try {
       if (typeof Notification !== "undefined" && Notification.permission === "granted") {
-        // Prefer service worker (shows even if tab in background)
         const reg = await navigator.serviceWorker?.ready
         if (reg?.showNotification) {
-          await reg.showNotification(title, { body, tag: `apt-${apt.id}`, requireInteraction: false })
+          await reg.showNotification(title, {
+            body,
+            tag: `apt-${apt.id}`,
+            requireInteraction: true, // sticky until dismissed
+          })
         } else {
           new Notification(title, { body, tag: `apt-${apt.id}` })
         }
@@ -299,7 +302,12 @@ export default function AppointmentsPage() {
       console.warn("Notification failed:", e)
     }
 
-    // Mark as delivered (so we don’t fire again)
+    // In-tab LOUD alarm (if user enabled)
+    try {
+      if (isAlarmReady()) playAlarmLoop({ durationMs: 20000, cycles: 4 })
+    } catch {}
+
+    // Mark as delivered
     await supabase
       .from("appointments")
       .update({ time_alert_sent: true, updated_at: new Date().toISOString() })
@@ -325,7 +333,7 @@ export default function AppointmentsPage() {
           return
         }
 
-        // cap super long timeouts (setTimeout max reliable ~24.8 days)
+        // set timeout (max 24h chunk)
         const id = window.setTimeout(() => {
           void showAlarm(a)
         }, Math.min(delay, 24 * 60 * 60 * 1000))
@@ -364,6 +372,7 @@ export default function AppointmentsPage() {
               Geo-tagged nudges and optional alarm times that fit ADHD rhythms
             </p>
           </div>
+
           <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
             <DialogTrigger asChild>
               <Button>
@@ -386,8 +395,25 @@ export default function AppointmentsPage() {
           </Dialog>
         </div>
 
-        {/* Ask permission & register SW */}
-        <PushNotificationManager user={user} />
+        {/* Notifications + Loud Alarm enable */}
+        <div className="flex items-center gap-2">
+          <PushNotificationManager user={user} />
+          <Button
+            variant={isAlarmReady() ? "secondary" : "default"}
+            size="sm"
+            onClick={async () => {
+              const ok = await enableAlarmAudio()
+              if (!ok) alert("Couldn’t enable sound. Check browser autoplay settings.")
+            }}
+          >
+            {isAlarmReady() ? "Sound Ready ✅" : "Enable Loud Alarm 🔊"}
+          </Button>
+          {isAlarmReady() && (
+            <Button variant="outline" size="sm" className="bg-transparent" onClick={() => stopAlarm()}>
+              Stop Sound
+            </Button>
+          )}
+        </div>
 
         {/* Location Status */}
         <Card>
@@ -840,12 +866,15 @@ function AppointmentForm({
       if (scheduled_at) {
         payload.scheduled_at = scheduled_at
         payload.schedule_timezone = schedule_timezone
-        // reset delivery flag on change
         payload.time_alert_sent = false
       }
 
       if (appointment) {
-        const { error } = await supabase.from("appointments").update(payload).eq("id", appointment.id).eq("user_id", user.id)
+        const { error } = await supabase
+          .from("appointments")
+          .update(payload)
+          .eq("id", appointment.id)
+          .eq("user_id", user.id)
         if (error) throw error
       } else {
         const { error } = await supabase
