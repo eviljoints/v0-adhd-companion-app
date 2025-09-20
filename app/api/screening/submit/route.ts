@@ -4,21 +4,20 @@ import { createClient } from "@supabase/supabase-js"
 
 export const runtime = "nodejs"
 
-// ---- Env checks (fail fast) ----
+// ---- Env (use your names, with a fallback for the URL) ----
 const RESEND_API_KEY = process.env.RESEND_API_KEY
 const RESULTS_FROM_EMAIL = process.env.RESULTS_FROM_EMAIL
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL
+const SUPABASE_URL = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL
 const SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE_KEY
 
 if (!RESEND_API_KEY) throw new Error("Missing RESEND_API_KEY")
 if (!RESULTS_FROM_EMAIL) throw new Error("Missing RESULTS_FROM_EMAIL")
-if (!SUPABASE_URL) throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL")
+if (!SUPABASE_URL) throw new Error("Missing SUPABASE_URL / NEXT_PUBLIC_SUPABASE_URL")
 if (!SERVICE_ROLE) throw new Error("Missing SUPABASE_SERVICE_ROLE_KEY")
 
 const resend = new Resend(RESEND_API_KEY)
 const supabase = createClient(SUPABASE_URL, SERVICE_ROLE, { auth: { persistSession: false } })
 
-// Basic HTML escaping to keep the email clean/safe
 const escapeHTML = (s: string) =>
   s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string))
 
@@ -37,26 +36,17 @@ export async function POST(req: NextRequest) {
     const interpretation = String(body?.interpretation || "")
     const createdAt = new Date().toISOString()
 
-    // ---- Save to DB ----
+    // Save to Supabase
     const { error: dbErr } = await supabase
       .from("screening_results")
-      .insert([
-        {
-          email,
-          tool,
-          answers,
-          scores,
-          interpretation,
-          created_at: createdAt,
-        },
-      ])
+      .insert([{ email, tool, answers, scores, interpretation, created_at: createdAt }])
 
     if (dbErr) {
       console.error("DB insert error:", dbErr)
       return NextResponse.json({ error: "Failed to save results." }, { status: 500 })
     }
 
-    // ---- Compose email ----
+    // Compose email
     const subject = `Your ${tool} results`
     const pretty = JSON.stringify({ answers, scores }, null, 2)
     const html = `
@@ -81,7 +71,7 @@ ${interpretation}
 
 If these results resonate with your experience, consider contacting a qualified clinician for a full assessment.`
 
-    // ---- Send email via Resend ----
+    // Send email via Resend (hard-required)
     await resend.emails.send({
       from: RESULTS_FROM_EMAIL!,
       to: email,
