@@ -158,9 +158,7 @@ export default function AppointmentsPage() {
     }
   }, [])
 
-  import { removeByPublicUrl } from "@/lib/storage"
-…
-const deleteAppointment = async (id: string) => {
+ const deleteAppointment = async (id: string) => {
   if (!user) return
   // optional UI confirm:
   if (!window.confirm("Delete this reminder? This will also remove any attached image/voice note.")) return
