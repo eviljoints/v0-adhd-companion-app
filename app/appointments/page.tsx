@@ -2,7 +2,7 @@
 "use client"
 
 import type React from "react"
-import { useState, useEffect, useRef, useMemo } from "react"
+import { useState, useEffect, useRef } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
@@ -72,33 +72,24 @@ type PickedPlace = {
 }
 
 /* -------------------- Helpers -------------------- */
-// Pick a locale: browser (auto) or hardcode "en-GB"
-const DEFAULT_LOCALE =
-  typeof navigator !== "undefined" ? navigator.language || "en-GB" : "en-GB"
 
-export function formatLocalDateTime(
-  iso: string | null | undefined,
-  locale: string = DEFAULT_LOCALE,
-  opts?: Intl.DateTimeFormatOptions
-) {
+// British-friendly datetime (DD/MM/YYYY, 24h). Respects saved timezone if provided.
+function formatDateTime(iso: string | null | undefined, tz?: string) {
   if (!iso) return ""
-  const d = new Date(iso)
-  try {
-    return d.toLocaleString(locale, {
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false, // 24h clock; remove if you want AM/PM
-      ...opts,
-    })
-  } catch {
-    return d.toString()
+  const locale = "en-GB" // force UK format; change to navigator.language || "en-GB" to auto-detect
+  const opts: Intl.DateTimeFormatOptions = {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    ...(tz ? { timeZone: tz } : {}),
   }
+  return new Intl.DateTimeFormat(locale, opts).format(new Date(iso))
 }
 
-/** ISO UTC -> "YYYY-MM-DDTHH:mm" for <input type="datetime-local"> */
+/** ISO (UTC) -> "YYYY-MM-DDTHH:mm" for <input type="datetime-local"> */
 export function utcISOToLocalDateTime(iso: string) {
   if (!iso) return ""
   const d = new Date(iso)
@@ -266,7 +257,7 @@ export default function AppointmentsPage() {
     const a =
       Math.sin(Δφ / 2) ** 2 +
       Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) ** 2
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+    const c = 2 * Math.atan2(Math.sqrt(1 - a), Math.sqrt(a))
     return R * c
   }
 
@@ -528,7 +519,6 @@ export default function AppointmentsPage() {
             </h2>
             <div className="grid gap-4">
               {nearbyAppointments.map((a) => (
-                
                 <AppointmentCard
                   key={a.id}
                   appointment={a}
@@ -770,10 +760,10 @@ function AppointmentCard({
 
                 {/* Time alarm info */}
                 {appointment.scheduled_at && !appointment.time_alert_sent && (
-  <p className="text-xs text-muted-foreground mt-2">
-    Alarm at {formatDateTime(appointment.scheduled_at, appointment.schedule_timezone ?? undefined)}
-  </p>
-)}
+                  <p className="text-xs text-muted-foreground mt-2">
+                    Alarm at {formatDateTime(appointment.scheduled_at, appointment.schedule_timezone ?? undefined)}
+                  </p>
+                )}
                 {appointment.time_alert_sent && (
                   <p className="text-xs text-green-600 mt-2">Alarm sent</p>
                 )}
@@ -796,7 +786,7 @@ function AppointmentCard({
                     Delete
                   </Button>
 
-                  {/* Edit (replaces kebab) */}
+                  {/* Edit */}
                   <Button
                     variant="outline"
                     size="sm"
