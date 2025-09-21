@@ -1,7 +1,8 @@
+// app/appointments/page.tsx
 "use client"
 
 import type React from "react"
-import { useEffect, useRef, useState } from "react"
+import { useState, useEffect, useRef, useMemo } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
@@ -17,7 +18,6 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import {
   MapPin,
@@ -26,7 +26,6 @@ import {
   AlertCircle,
   CheckCircle2,
   ImageIcon,
-  MoreVertical,
   Edit,
   Trash2,
   Mic,
@@ -64,21 +63,27 @@ interface Appointment {
   updated_at: string
 }
 
+type PickedPlace = {
+  name: string
+  address: string
+  latitude: number
+  longitude: number
+  source: "mapbox" | "nominatim"
+}
+
 /* -------------------- Helpers -------------------- */
 
-/** ISO (UTC) -> "YYYY-MM-DDTHH:mm" for <input type="datetime-local"> */
+/** ISO UTC -> "YYYY-MM-DDTHH:mm" for <input type="datetime-local"> */
 export function utcISOToLocalDateTime(iso: string) {
   if (!iso) return ""
-  const d = new Date(iso) // exact instant
+  const d = new Date(iso)
   const pad = (n: number) => String(n).padStart(2, "0")
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
-/** "YYYY-MM-DDTHH:mm" (local wall time) -> UTC ISO string */
+/** "YYYY-MM-DDTHH:mm" (local) -> UTC ISO string */
 export function localDateTimeToUTCISO(local: string) {
   if (!local) return ""
-  // new Date("YYYY-MM-DDTHH:mm") is interpreted in the browser's local timezone.
-  // toISOString() converts that instant to UTC.
   return new Date(local).toISOString()
 }
 
@@ -93,6 +98,9 @@ export default function AppointmentsPage() {
   const [editingAppointment, setEditingAppointment] = useState<Appointment | null>(null)
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null)
   const [locationPermission, setLocationPermission] = useState<"granted" | "denied" | "prompt">("prompt")
+
+  // Sorting
+  const [sortBy, setSortBy] = useState<"created" | "scheduled" | "proximity">("created")
 
   // scheduled timeouts (time alarms)
   const timeoutsRef = useRef<Record<string, number>>({})
@@ -210,7 +218,7 @@ export default function AppointmentsPage() {
     }
   }
 
-  // Optional device location (used for distance badge)
+  // Optional device location (used for distance badge + proximity sorting)
   useEffect(() => {
     if ("geolocation" in navigator) {
       navigator.geolocation.getCurrentPosition(
@@ -293,7 +301,7 @@ export default function AppointmentsPage() {
           await reg.showNotification(title, {
             body,
             tag: `apt-${apt.id}`,
-            requireInteraction: true, // sticky until dismissed
+            requireInteraction: true,
           })
         } else {
           new Notification(title, { body, tag: `apt-${apt.id}` })
@@ -334,13 +342,39 @@ export default function AppointmentsPage() {
           return
         }
 
-        // set timeout (max 24h chunk)
+        // set timeout (cap by 24h chunk)
         const id = window.setTimeout(() => {
           void showAlarm(a)
         }, Math.min(delay, 24 * 60 * 60 * 1000))
 
         timeoutsRef.current[a.id] = id
       })
+  }
+
+  /* -------------------- Sorting -------------------- */
+
+  const sortAppointments = (list: Appointment[]) => {
+    const copy = [...list]
+    if (sortBy === "created") {
+      copy.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+    } else if (sortBy === "scheduled") {
+      copy.sort((a, b) => {
+        const at = a.scheduled_at ? new Date(a.scheduled_at).getTime() : Number.POSITIVE_INFINITY
+        const bt = b.scheduled_at ? new Date(b.scheduled_at).getTime() : Number.POSITIVE_INFINITY
+        return at - bt
+      })
+    } else if (sortBy === "proximity") {
+      copy.sort((a, b) => {
+        const da = (a.latitude != null && a.longitude != null && userLocation)
+          ? calculateDistance(userLocation.lat, userLocation.lng, a.latitude, a.longitude)
+          : Number.POSITIVE_INFINITY
+        const db = (b.latitude != null && b.longitude != null && userLocation)
+          ? calculateDistance(userLocation.lat, userLocation.lng, b.latitude, b.longitude)
+          : Number.POSITIVE_INFINITY
+        return da - db
+      })
+    }
+    return copy
   }
 
   /* -------------------- Render -------------------- */
@@ -366,7 +400,7 @@ export default function AppointmentsPage() {
     <div className="md:pl-64">
       <div className="p-6 space-y-6">
         {/* Header */}
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
           <div>
             <h1 className="text-3xl font-bold">Location & Time Reminders</h1>
             <p className="text-muted-foreground mt-1">
@@ -374,26 +408,44 @@ export default function AppointmentsPage() {
             </p>
           </div>
 
-          <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-            <DialogTrigger asChild>
-              <Button>
-                <Plus className="h-4 w-4 mr-2" />
-                Add Reminder
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto">
-              <DialogHeader>
-                <DialogTitle>Create Reminder</DialogTitle>
-                <DialogDescription>Only the title is required. Everything else is optional.</DialogDescription>
-              </DialogHeader>
-              <AppointmentForm
-                user={user}
-                userLocation={userLocation}
-                onClose={() => setIsDialogOpen(false)}
-                onSuccess={() => user && loadAppointments(user.id)}
-              />
-            </DialogContent>
-          </Dialog>
+          <div className="flex items-center gap-2">
+            {/* Sort control */}
+            <div className="flex items-center gap-2 mr-2">
+              <Label className="text-sm text-muted-foreground">Sort</Label>
+              <Select value={sortBy} onValueChange={(v: "created" | "scheduled" | "proximity") => setSortBy(v)}>
+                <SelectTrigger className="w-[180px]">
+                  <SelectValue placeholder="Sort by" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="created">Created (newest)</SelectItem>
+                  <SelectItem value="scheduled">Scheduled time</SelectItem>
+                  <SelectItem value="proximity">Proximity</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Add */}
+            <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+              <DialogTrigger asChild>
+                <Button>
+                  <Plus className="h-4 w-4 mr-2" />
+                  Add Reminder
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto">
+                <DialogHeader>
+                  <DialogTitle>Create Reminder</DialogTitle>
+                  <DialogDescription>Only the title is required. Everything else is optional.</DialogDescription>
+                </DialogHeader>
+                <AppointmentForm
+                  user={user}
+                  userLocation={userLocation}
+                  onClose={() => setIsDialogOpen(false)}
+                  onSuccess={() => user && loadAppointments(user.id)}
+                />
+              </DialogContent>
+            </Dialog>
+          </div>
         </div>
 
         {/* Notifications + Loud Alarm enable */}
@@ -477,7 +529,7 @@ export default function AppointmentsPage() {
             </Card>
           ) : (
             <div className="grid gap-4">
-              {activeAppointments.map((a) => (
+              {sortAppointments(activeAppointments).map((a) => (
                 <AppointmentCard
                   key={a.id}
                   appointment={a}
@@ -497,7 +549,7 @@ export default function AppointmentsPage() {
           <div>
             <h2 className="text-xl font-semibold mb-4">Completed</h2>
             <div className="grid gap-4">
-              {completedAppointments.map((a) => (
+              {sortAppointments(completedAppointments).map((a) => (
                 <AppointmentCard
                   key={a.id}
                   appointment={a}
@@ -705,7 +757,7 @@ function AppointmentCard({
                 <div className="flex items-center gap-2">
                   <Badge className={getPriorityColor(appointment.priority)}>{appointment.priority}</Badge>
 
-                  {/* Always-visible Delete button */}
+                  {/* Delete */}
                   <Button
                     variant="destructive"
                     size="sm"
@@ -718,24 +770,18 @@ function AppointmentCard({
                     Delete
                   </Button>
 
-                  {/* Kebab menu (kept) */}
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="icon" className="h-8 w-8">
-                        <MoreVertical className="h-4 w-4" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem onClick={() => onEdit(appointment)}>
-                        <Edit className="h-4 w-4 mr-2" />
-                        Edit
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => onDelete(appointment)} className="text-red-600">
-                        <Trash2 className="h-4 w-4 mr-2" />
-                        Delete
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
+                  {/* Edit (replaces kebab) */}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => onEdit(appointment)}
+                    className="h-8"
+                    aria-label="Edit reminder"
+                    title="Edit"
+                  >
+                    <Edit className="h-4 w-4 mr-1" />
+                    Edit
+                  </Button>
                 </div>
                 {isNearby && !appointment.completed && (
                   <Badge variant="default" className="bg-orange-600">Nearby!</Badge>
@@ -785,20 +831,21 @@ function AppointmentForm({
     priority: (appointment?.priority ?? "medium") as "low" | "medium" | "high",
     scheduled_local: appointment?.scheduled_at ? utcISOToLocalDateTime(appointment.scheduled_at) : "",
   })
+  const [pickedPlace, setPickedPlace] = useState<PickedPlace | null>(null)
   const [selectedImage, setSelectedImage] = useState<{ file: File; preview: string } | null>(
     appointment?.image_url ? { file: new File([], "existing"), preview: appointment.image_url } : null,
   )
   const [voiceRecording, setVoiceRecording] = useState<{ blob: Blob; duration: number } | null>(null)
-  const [pickedPlace, setPickedPlace] = useState<{ lat: number; lng: number; name: string } | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
 
   const supabase = createClient()
 
+  // Fallback geocoder if user typed raw text instead of picking a suggestion
   const geocodeAddress = async (q: string) => {
     const r = await fetch(`/api/geocode?q=${encodeURIComponent(q)}`, { cache: "no-store" })
     if (!r.ok) throw new Error((await r.json()).error || "Failed to geocode")
-    return (await r.json()) as { latitude: number; longitude: number; name: string; address?: string }
+    return (await r.json()) as { latitude: number; longitude: number; name: string }
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -808,29 +855,23 @@ function AppointmentForm({
     setFormError(null)
 
     try {
-      // 1) Coordinates (optional) — resolve in order: pickedPlace > typed address > device location
+      // 1) Coordinates (optional) — prefer picked place, else geocode typed address, else userLocation, else null
       let latitude: number | null = appointment?.latitude ?? null
       let longitude: number | null = appointment?.longitude ?? null
+      let locationName: string | null = formData.location_name?.trim() || null
 
       if (pickedPlace) {
-        latitude = pickedPlace.lat
-        longitude = pickedPlace.lng
-        if (!formData.location_name) {
-          setFormData((p) => ({ ...p, location_name: pickedPlace.name }))
-        }
-      } else if (formData.address.trim()) {
+        latitude = pickedPlace.latitude
+        longitude = pickedPlace.longitude
+        if (!locationName) locationName = pickedPlace.name || pickedPlace.address
+      } else if (!appointment && formData.address.trim()) {
         const g = await geocodeAddress(formData.address.trim())
         latitude = g.latitude
         longitude = g.longitude
-        if (!formData.location_name) {
-          setFormData((p) => ({ ...p, location_name: g.name }))
-        }
-      } else if (userLocation) {
+        if (!locationName) locationName = g.name
+      } else if (!appointment && userLocation) {
         latitude = userLocation.lat
         longitude = userLocation.lng
-      } else {
-        latitude = null
-        longitude = null
       }
 
       // 2) Media (optional)
@@ -855,15 +896,16 @@ function AppointmentForm({
         schedule_timezone = Intl.DateTimeFormat().resolvedOptions().timeZone
       }
 
-      // 4) Build payload (only include present values)
+      // 4) Build payload
       const payload: Record<string, any> = {
         title: (formData.title || "Untitled reminder").trim(),
         updated_at: new Date().toISOString(),
         trigger_distance: parseInt(formData.trigger_distance, 10) || 100,
         priority: formData.priority,
+        completed: appointment?.completed ?? false,
       }
       if (formData.description.trim()) payload.description = formData.description.trim()
-      if (formData.location_name.trim()) payload.location_name = formData.location_name.trim()
+      if (locationName) payload.location_name = locationName
       if (latitude != null) payload.latitude = latitude
       if (longitude != null) payload.longitude = longitude
       if (imageUrl) payload.image_url = imageUrl
@@ -872,7 +914,7 @@ function AppointmentForm({
       if (scheduled_at) {
         payload.scheduled_at = scheduled_at
         payload.schedule_timezone = schedule_timezone
-        payload.time_alert_sent = false // reset on change
+        payload.time_alert_sent = false
       }
 
       if (appointment) {
@@ -885,7 +927,7 @@ function AppointmentForm({
       } else {
         const { error } = await supabase
           .from("appointments")
-          .insert([{ user_id: user.id, completed: false, ...payload }])
+          .insert([{ user_id: user.id, ...payload }])
         if (error) throw error
       }
 
@@ -938,16 +980,16 @@ function AppointmentForm({
       {/* Address (optional) with autocomplete */}
       {!appointment && (
         <div>
-          <Label htmlFor="address">Address (optional)</Label>
+          <Label htmlFor="address">Address or Place (optional)</Label>
           <AddressAutocomplete
             value={formData.address}
             onValueChange={(v) => {
               setFormData((p) => ({ ...p, address: v }))
-              setPickedPlace(null) // reset if user edits after picking
+              setPickedPlace(null) // reset if user types again after picking
             }}
             userLocation={userLocation || null}
             onPick={(place) => {
-              setPickedPlace({ lat: place.latitude, lng: place.longitude, name: place.name })
+              setPickedPlace(place)
               setFormData((p) => ({
                 ...p,
                 address: place.address,
@@ -957,7 +999,7 @@ function AppointmentForm({
             placeholder="Start typing an address or place…"
           />
           <p className="text-xs text-muted-foreground mt-1">
-            Suggestions are biased to your current area.
+            Suggestions are biased to your current area. If left empty, we’ll try your current location.
           </p>
         </div>
       )}
