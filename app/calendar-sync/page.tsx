@@ -1,268 +1,260 @@
 "use client"
 
-import { useState, useEffect } from "react"
-import Link from "next/link"
-import { usePathname, useRouter } from "next/navigation"
+import { useEffect, useMemo, useState } from "react"
 import { Button } from "@/components/ui/button"
-import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet"
-import { Badge } from "@/components/ui/badge"
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
-import {
-  Home,
-  MapPin,
-  Brain,
-  Users,
-  Settings,
-  Menu,
-  Bell,
-  LogOut,
-  User,
-  NotepadTextDashed,
-  CalendarDays, // <- safer calendar icon
-} from "lucide-react"
-import { cn } from "@/lib/utils"
+import { Card, CardContent } from "@/components/ui/card"
+import { Label } from "@/components/ui/label"
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select"
+import { Checkbox } from "@/components/ui/checkbox"
 import { createClient } from "@/lib/supabase/client"
-import type { User as SupabaseUser } from "@supabase/supabase-js"
 
-// ✅ Corrected nav items (note Calendar item uses {} not ())
-const navigation = [
-  { name: "Home", href: "/", icon: Home },
-  { name: "Appointments", href: "/appointments", icon: MapPin },
-  { name: "AI Coach", href: "/coach", icon: Brain },
-  { name: "VIP Contacts", href: "/contacts", icon: Users },
-  { name: "Screening", href: "/screening", icon: NotepadTextDashed },
-  { name: "Settings", href: "/settings", icon: Settings },
-  { name: "Calendar Sync", href: "/calendar-sync", icon: CalendarDays }, // 👈 added
-]
+type GCal = { id: string; summary: string; primary?: boolean }
+type GEvent = {
+  id: string
+  summary?: string
+  description?: string
+  location?: string
+  start: { dateTime?: string; date?: string }
+  end: { dateTime?: string; date?: string }
+}
 
-export function Navigation() {
-  const pathname = usePathname()
-  const router = useRouter()
-  const [isOpen, setIsOpen] = useState(false)
-  const [user, setUser] = useState<SupabaseUser | null>(null)
-  const [profile, setProfile] = useState<any>(null)
-  const [badgeCounts, setBadgeCounts] = useState<Record<string, number>>({})
+export default function CalendarSyncPage() {
+  const [googleToken, setGoogleToken] = useState<string | null>(null)
+  const [calendars, setCalendars] = useState<GCal[] | null>(null)
+  const [calendarId, setCalendarId] = useState<string>("")
+  const [events, setEvents] = useState<GEvent[]>([])
+  const [selected, setSelected] = useState<Record<string, boolean>>({})
+  const [loadingCals, setLoadingCals] = useState(false)
+  const [loadingEvents, setLoadingEvents] = useState(false)
+  const [importing, setImporting] = useState(false)
+  const supabase = createClient()
 
+  // 1) Get Google access token from Supabase session
   useEffect(() => {
-    const supabase = createClient()
+    const run = async () => {
+      const { data: { session } } = await supabase.auth.getSession()
+      // NOTE: you must add the additional scope in Supabase: `https://www.googleapis.com/auth/calendar.readonly`
+      setGoogleToken(session?.provider_token ?? null)
+    }
+    run()
+  }, [supabase])
 
-    supabase.auth.getUser().then(({ data: { user } }) => {
-      setUser(user)
-      if (user) {
-        supabase.from("profiles").select("*").eq("id", user.id).single().then(({ data }) => setProfile(data))
-        fetchBadgeCounts(user.id)
-      }
-    })
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_, session) => {
-      setUser(session?.user ?? null)
-      if (session?.user) {
-        supabase.from("profiles").select("*").eq("id", session.user.id).single().then(({ data }) => setProfile(data))
-        fetchBadgeCounts(session.user.id)
-      } else {
-        setProfile(null)
-        setBadgeCounts({})
-      }
-    })
-
-    return () => subscription.unsubscribe()
-  }, [])
-
-  const fetchBadgeCounts = async (userId: string) => {
-    const supabase = createClient()
-    try {
-      const [appointmentsResult, contactsResult] = await Promise.allSettled([
-        supabase.from("appointments").select("*", { count: "exact" }).eq("user_id", userId).eq("completed", false),
-        supabase.from("vip_contacts").select("*").eq("user_id", userId),
-      ])
-
-      const newBadgeCounts: Record<string, number> = {}
-
-      if (appointmentsResult.status === "fulfilled" && appointmentsResult.value.count) {
-        newBadgeCounts["Appointments"] = appointmentsResult.value.count
-      }
-
-      if (contactsResult.status === "fulfilled" && contactsResult.value.data) {
-        const contactsNeedingAttention = contactsResult.value.data.filter((contact: any) => {
-          if (!contact.last_contacted) return true
-          const daysSince = Math.floor((Date.now() - new Date(contact.last_contacted).getTime()) / 86_400_000)
-          return daysSince >= (contact.contact_frequency_days || 7)
+  // 2) If connected, load calendars
+  useEffect(() => {
+    const run = async () => {
+      if (!googleToken) return
+      setLoadingCals(true)
+      try {
+        const res = await fetch("/api/calendar/list", {
+          headers: { authorization: `Bearer ${googleToken}` },
+          cache: "no-store",
         })
-        if (contactsNeedingAttention.length > 0) {
-          newBadgeCounts["VIP Contacts"] = contactsNeedingAttention.length
-        }
+        const j = await res.json()
+        if (!res.ok) throw new Error(j.error || "Failed to list calendars")
+        setCalendars(j.items || [])
+        const prim = (j.items || []).find((c: any) => c.primary) || (j.items || [])[0]
+        setCalendarId(prim?.id || "")
+      } catch (e) {
+        console.error(e)
+        setCalendars([])
+      } finally {
+        setLoadingCals(false)
       }
+    }
+    run()
+  }, [googleToken])
 
-      setBadgeCounts(newBadgeCounts)
-    } catch (err) {
-      console.error("Error fetching badge counts:", err)
+  // 3) Load events when a calendar is picked
+  useEffect(() => {
+    const run = async () => {
+      if (!googleToken || !calendarId) return
+      setLoadingEvents(true)
+      try {
+        const url = `/api/calendar/events?calendarId=${encodeURIComponent(calendarId)}`
+        const res = await fetch(url, {
+          headers: { authorization: `Bearer ${googleToken}` },
+          cache: "no-store",
+        })
+        const j = await res.json()
+        if (!res.ok) throw new Error(j.error || "Failed to list events")
+        const items: GEvent[] = j.items || []
+        setEvents(items)
+        setSelected(Object.fromEntries(items.map((e) => [e.id, true])))
+      } catch (e) {
+        console.error(e)
+        setEvents([])
+        setSelected({})
+      } finally {
+        setLoadingEvents(false)
+      }
+    }
+    run()
+  }, [googleToken, calendarId])
+
+  // 4) Begin OAuth with the calendar scope if token missing
+  const connectGoogle = async () => {
+    await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: {
+        scopes: "openid email profile https://www.googleapis.com/auth/calendar.readonly",
+        redirectTo: `${window.location.origin}/calendar-sync`,
+      },
+    })
+  }
+
+  // Helper: normalize a start time (use dateTime if present; if all-day date, set 09:00 local)
+  const toWhen = (e: GEvent) => {
+    if (e.start?.dateTime) return e.start.dateTime
+    if (e.start?.date) {
+      const d = new Date(`${e.start.date}T09:00:00`) // local 9AM
+      return d.toISOString()
+    }
+    return null
+  }
+
+  // Optional: geocode an event’s free-text location via your existing geocode endpoint
+  const geocode = async (q?: string) => {
+    if (!q) return { latitude: null, longitude: null, name: null }
+    try {
+      const r = await fetch(`/api/geocode?q=${encodeURIComponent(q)}`, { cache: "no-store" })
+      if (!r.ok) return { latitude: null, longitude: null, name: null }
+      const j = await r.json()
+      return { latitude: j.latitude ?? null, longitude: j.longitude ?? null, name: j.name ?? null }
+    } catch {
+      return { latitude: null, longitude: null, name: null }
     }
   }
 
-  const handleSignOut = async () => {
-    const supabase = createClient()
-    await supabase.auth.signOut()
-    router.push("/auth/login")
+  // 5) Import selected events as reminders
+  const importSelected = async () => {
+    setImporting(true)
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) throw new Error("Not signed in")
+
+      const toImport = events.filter((e) => selected[e.id])
+      for (const e of toImport) {
+        const when = toWhen(e)
+        const g = await geocode(e.location)
+
+        const payload: any = {
+          user_id: user.id,
+          title: e.summary || "Calendar event",
+          description: e.description || null,
+          location_name: g.name || e.location || null,
+          latitude: g.latitude,
+          longitude: g.longitude,
+          trigger_distance: 100,
+          priority: "medium",
+          completed: false,
+          updated_at: new Date().toISOString(),
+        }
+        if (when) {
+          payload.scheduled_at = when
+          payload.schedule_timezone = Intl.DateTimeFormat().resolvedOptions().timeZone
+          payload.time_alert_sent = false
+        }
+
+        const { error } = await supabase.from("appointments").insert([payload])
+        if (error) throw error
+      }
+      alert(`Imported ${toImport.length} event(s) into reminders.`)
+    } catch (e: any) {
+      console.error(e)
+      alert(e.message || "Import failed")
+    } finally {
+      setImporting(false)
+    }
   }
 
-  const NavItems = ({ mobile = false }) => (
-    <nav className={cn("space-y-2", mobile && "px-4")}>
-      {navigation.map((item) => {
-        const isActive = pathname === item.href
-        const badgeCount = badgeCounts[item.name]
-        return (
-          <Link
-            key={item.name}
-            href={item.href}
-            onClick={() => mobile && setIsOpen(false)}
-            className={cn(
-              "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
-              isActive
-                ? "bg-primary text-primary-foreground"
-                : "text-muted-foreground hover:text-foreground hover:bg-muted",
-            )}
-          >
-            <item.icon className="h-4 w-4" />
-            {item.name}
-            {!!badgeCount && (
-              <Badge variant="secondary" className="ml-auto">
-                {badgeCount}
-              </Badge>
-            )}
-          </Link>
-        )
-      })}
-    </nav>
+  const selectedCount = useMemo(
+    () => Object.values(selected).filter(Boolean).length,
+    [selected]
   )
-
-  const UserMenu = () => (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button variant="ghost" className="relative h-8 w-8 rounded-full">
-          <Avatar className="h-8 w-8">
-            <AvatarImage src={profile?.avatar_url || "/placeholder.svg"} alt={profile?.full_name || user?.email} />
-            <AvatarFallback>
-              {profile?.full_name ? profile.full_name.charAt(0).toUpperCase() : user?.email?.charAt(0).toUpperCase()}
-            </AvatarFallback>
-          </Avatar>
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent className="w-56" align="end" forceMount>
-        <DropdownMenuLabel className="font-normal">
-          <div className="flex flex-col space-y-1">
-            <p className="text-sm font-medium leading-none">{profile?.full_name || "User"}</p>
-            <p className="text-xs leading-none text-muted-foreground">{user?.email}</p>
-          </div>
-        </DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem asChild>
-          <Link href="/profile">
-            <User className="mr-2 h-4 w-4" />
-            <span>Profile</span>
-          </Link>
-        </DropdownMenuItem>
-        <DropdownMenuItem asChild>
-          <Link href="/settings">
-            <Settings className="mr-2 h-4 w-4" />
-            <span>Settings</span>
-          </Link>
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={handleSignOut}>
-          <LogOut className="mr-2 h-4 w-4" />
-          <span>Log out</span>
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  )
-
-  if (!user) {
-    return (
-      <div className="md:hidden">
-        <div className="flex items-center justify-between p-4 border-b bg-card">
-          <div className="flex items-center">
-            <Brain className="h-6 w-6 text-primary" />
-            <span className="ml-2 font-semibold">ADHD Companion</span>
-          </div>
-          <Button asChild>
-            <Link href="/auth/login">Sign In</Link>
-          </Button>
-        </div>
-      </div>
-    )
-  }
 
   return (
-    <>
-      {/* Desktop Sidebar */}
-      <div className="hidden md:flex md:w-64 md:flex-col md:fixed md:inset-y-0">
-        <div className="flex flex-col flex-grow pt-5 bg-card border-r overflow-y-auto">
-          <div className="flex items-center flex-shrink-0 px-4">
-            <Brain className="h-8 w-8 text-primary" />
-            <span className="ml-2 text-lg font-semibold">ADHD Companion</span>
-          </div>
-          <div className="mt-8 flex-grow flex flex-col">
-            <NavItems />
-          </div>
-          <div className="flex-shrink-0 p-4 border-t">
-            <div className="flex items-center gap-3">
-              <Avatar className="h-8 w-8">
-                <AvatarImage src={profile?.avatar_url || "/placeholder.svg"} alt={profile?.full_name || user?.email} />
-                <AvatarFallback>
-                  {profile?.full_name
-                    ? profile.full_name.charAt(0).toUpperCase()
-                    : user?.email?.charAt(0).toUpperCase()}
-                </AvatarFallback>
-              </Avatar>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium truncate">{profile?.full_name || "User"}</p>
-                <p className="text-xs text-muted-foreground truncate">{user?.email}</p>
-              </div>
-              <UserMenu />
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Mobile Header */}
-      <div className="md:hidden">
-        <div className="flex items-center justify-between p-4 border-b bg-card">
-          <div className="flex items-center">
-            <Brain className="h-6 w-6 text-primary" />
-            <span className="ml-2 font-semibold">ADHD Companion</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button variant="ghost" size="icon">
-              <Bell className="h-5 w-5" />
-            </Button>
-            <UserMenu />
-            <Sheet open={isOpen} onOpenChange={setIsOpen}>
-              <SheetTrigger asChild>
-                <Button variant="ghost" size="icon">
-                  <Menu className="h-5 w-5" />
-                </Button>
-              </SheetTrigger>
-              <SheetContent side="left" className="w-64">
-                <div className="flex items-center mb-8">
-                  <Brain className="h-6 w-6 text-primary" />
-                  <span className="ml-2 font-semibold">ADHD Companion</span>
+    <div className="md:pl-64">
+      <div className="p-6 max-w-3xl mx-auto space-y-6">
+        <Card>
+          <CardContent className="pt-6 space-y-4">
+            <h1 className="text-2xl font-bold">Calendar Sync</h1>
+            {!googleToken ? (
+              <>
+                <p className="text-sm text-muted-foreground">
+                  Connect Google Calendar (read-only) to import events as reminders.
+                </p>
+                <Button onClick={connectGoogle}>Connect Google Calendar</Button>
+              </>
+            ) : (
+              <>
+                <div className="space-y-2">
+                  <Label>Pick a calendar</Label>
+                  <Select
+                    value={calendarId}
+                    onValueChange={(v) => setCalendarId(v)}
+                    disabled={loadingCals || !calendars?.length}
+                  >
+                    <SelectTrigger><SelectValue placeholder="Choose calendar" /></SelectTrigger>
+                    <SelectContent>
+                      {(calendars || []).map((c) => (
+                        <SelectItem key={c.id} value={c.id}>
+                          {c.summary}{c.primary ? " (Primary)" : ""}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
-                <NavItems mobile />
-              </SheetContent>
-            </Sheet>
-          </div>
-        </div>
+
+                <div className="pt-2">
+                  <h2 className="font-semibold mb-2">Upcoming events</h2>
+                  {loadingEvents ? (
+                    <p className="text-sm text-muted-foreground">Loading events…</p>
+                  ) : events.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">No events found in the next 30 days.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {events.map((e) => {
+                        const when = toWhen(e)
+                        return (
+                          <label key={e.id} className="flex items-start gap-2 border rounded p-2">
+                            <Checkbox
+                              checked={!!selected[e.id]}
+                              onCheckedChange={(v) =>
+                                setSelected((s) => ({ ...s, [e.id]: !!v }))
+                              }
+                            />
+                            <div className="text-sm">
+                              <div className="font-medium">{e.summary || "Untitled"}</div>
+                              {when && (
+                                <div className="text-muted-foreground">
+                                  {new Date(when).toLocaleString()}
+                                </div>
+                              )}
+                              {e.location && (
+                                <div className="text-muted-foreground">📍 {e.location}</div>
+                              )}
+                            </div>
+                          </label>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                <div className="pt-2">
+                  <Button disabled={importing || selectedCount === 0} onClick={importSelected}>
+                    {importing ? "Importing…" : `Import ${selectedCount} as reminders`}
+                  </Button>
+                </div>
+              </>
+            )}
+          </CardContent>
+        </Card>
+
+        <p className="text-xs text-muted-foreground">
+          Tip: if you just enabled the Google “Calendar read-only” scope in Supabase, sign out and back in so we receive a fresh token with that scope.
+        </p>
       </div>
-    </>
+    </div>
   )
 }
