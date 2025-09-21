@@ -60,7 +60,7 @@ export function AddressAutocomplete({
         const r = await fetch(`/api/places?${params.toString()}`, { signal: ac.signal, cache: "no-store" })
         const j = await r.json()
         if (!ac.signal.aborted) {
-          setItems(j.results || [])
+          setItems(j.features || [])
           setOpen(true)
         }
       } catch {
