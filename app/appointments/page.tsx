@@ -72,6 +72,31 @@ type PickedPlace = {
 }
 
 /* -------------------- Helpers -------------------- */
+// Pick a locale: browser (auto) or hardcode "en-GB"
+const DEFAULT_LOCALE =
+  typeof navigator !== "undefined" ? navigator.language || "en-GB" : "en-GB"
+
+export function formatLocalDateTime(
+  iso: string | null | undefined,
+  locale: string = DEFAULT_LOCALE,
+  opts?: Intl.DateTimeFormatOptions
+) {
+  if (!iso) return ""
+  const d = new Date(iso)
+  try {
+    return d.toLocaleString(locale, {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false, // 24h clock; remove if you want AM/PM
+      ...opts,
+    })
+  } catch {
+    return d.toString()
+  }
+}
 
 /** ISO UTC -> "YYYY-MM-DDTHH:mm" for <input type="datetime-local"> */
 export function utcISOToLocalDateTime(iso: string) {
