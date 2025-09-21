@@ -528,24 +528,7 @@ export default function AppointmentsPage() {
             </h2>
             <div className="grid gap-4">
               {nearbyAppointments.map((a) => (
-                // --- Date/Time formatting (British by default) ---
-function formatDateTime(iso: string, tz?: string) {
-  // Prefer the user's browser locale but fall back to en-GB (DD/MM/YYYY, 24h)
-  const locale =
-    (typeof navigator !== "undefined" &&
-      (navigator.languages?.[0] || navigator.language)) ||
-    "en-GB"
-
-  // 24-hour time, medium date (e.g., 21 Sept 2025, 19:10)
-  const opts: Intl.DateTimeFormatOptions = {
-    dateStyle: "medium",
-    timeStyle: "short",
-    hour12: false,
-    ...(tz ? { timeZone: tz } : {}),
-  }
-  return new Intl.DateTimeFormat(locale, opts).format(new Date(iso))
-}
-
+                
                 <AppointmentCard
                   key={a.id}
                   appointment={a}
