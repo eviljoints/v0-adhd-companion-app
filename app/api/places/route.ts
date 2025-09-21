@@ -37,7 +37,7 @@ export async function GET(req: NextRequest) {
     address: f.place_name,
     latitude: f.center?.[1],
     longitude: f.center?.[0],
-    source: "mapbox",
+    source: "mapbox" as const,
   }))
   return NextResponse.json({ features })
 }

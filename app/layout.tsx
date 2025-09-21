@@ -1,5 +1,5 @@
 import type React from "react"
-import type { Metadata } from "next"
+import { Metadata, viewport } from "next"
 import { GeistSans } from "geist/font/sans"
 import { GeistMono } from "geist/font/mono"
 import { Analytics } from "@vercel/analytics/next"
@@ -7,13 +7,15 @@ import { Navigation } from "@/components/navigation"
 import { Suspense } from "react"
 import "./globals.css"
 
+
+
 export const metadata: Metadata = {
   title: "ADHD Companion - Stay Organized & Motivated",
   description: "Location-based reminders, AI coaching, and VIP contacts to help manage ADHD",
   generator: "v0.app",
   manifest: "/manifest.json",
   themeColor: "#3b82f6",
-  viewport: {
+  viewport: { viewport,
     width: "device-width",
     initialScale: 1,
     maximumScale: 1,
