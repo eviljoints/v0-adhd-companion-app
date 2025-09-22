@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input"
 import { Card } from "@/components/ui/card"
 import { cn } from "@/lib/utils"
 
-// Updated to include LocationIQ as a source
+// Location source variants supported by this component
 export type Place = {
   name: string
   address: string
@@ -55,7 +55,7 @@ export function AddressAutocomplete({
       const params = new URLSearchParams({ q })
       if (userLocation) {
         params.set("lat", String(userLocation.lat))
-        // NOTE: our new /api/places route expects `lon` (not `lng`)
+        // Our API expects `lon` (not `lng`)
         params.set("lon", String(userLocation.lng))
       }
 
@@ -65,21 +65,32 @@ export function AddressAutocomplete({
         const j = await r.json()
         if (ac.signal.aborted) return
 
-        // Our new LocationIQ-backed route returns an array of results.
-        // But to be defensive, support various shapes: [..], {results:[..]}, {features:[..]}
+        // Defensive parsing (LocationIQ returns an array)
         const raw: any[] = Array.isArray(j) ? j : (j.results || j.features || [])
 
         const mapped: Place[] = raw
           .map((it: any) => {
-            // LocationIQ fields: display_place, display_name, lat, lon
-            const lat = Number(it.lat ?? it.latitude ?? it.geometry?.lat ?? it.center?.[1])
-            const lon = Number(it.lon ?? it.longitude ?? it.geometry?.lon ?? it.center?.[0])
-            const name = it.display_place || it.name || it.address?.name || (it.display_name?.split(",")[0] ?? "")
-            const address = it.display_name || it.description || it.address?.label || it.formatted || ""
+            // LocationIQ: lat/lon come as strings
+            const lat = Number(
+              it.lat ?? it.latitude ?? it.geometry?.lat ?? (Array.isArray(it.center) ? it.center[1] : undefined),
+            )
+            const lon = Number(
+              it.lon ?? it.longitude ?? it.geometry?.lon ?? (Array.isArray(it.center) ? it.center[0] : undefined),
+            )
+
             if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null
+
+            const displayName = it.display_name || it.description || it.address?.label || it.formatted || ""
+            const name =
+              it.display_place ||
+              it.name ||
+              it.address?.name ||
+              (displayName ? String(displayName).split(",")[0] : "") ||
+              q
+
             return {
-              name: name || address || q,
-              address: address || name || "",
+              name,
+              address: displayName || name || "",
               latitude: lat,
               longitude: lon,
               source: "locationiq" as const,
@@ -87,9 +98,18 @@ export function AddressAutocomplete({
           })
           .filter(Boolean) as Place[]
 
-        setItems(mapped)
+        // Deduplicate by lat/lon/name to keep list tidy
+        const seen = new Set<string>()
+        const deduped = mapped.filter((p) => {
+          const k = `${p.name}|${p.latitude.toFixed(6)}|${p.longitude.toFixed(6)}`
+          if (seen.has(k)) return false
+          seen.add(k)
+          return true
+        })
+
+        setItems(deduped)
         setOpen(true)
-      } catch (e) {
+      } catch {
         if (!ac.signal.aborted) {
           setItems([])
           setOpen(true)
@@ -140,27 +160,24 @@ export function AddressAutocomplete({
         onKeyDown={onKeyDown}
         aria-autocomplete="list"
         aria-expanded={open}
+        role="combobox"
       />
       {open && (items.length > 0 || loading) && (
         <Card className="absolute z-50 mt-1 w-full shadow-lg">
-          {loading && (
-            <div className="px-3 py-2 text-sm text-muted-foreground">Searching…</div>
-          )}
-          {!loading && items.map((it, idx) => (
-            <button
-              key={`${it.source}-${it.latitude}-${it.longitude}-${idx}`}
-              type="button"
-              className={cn(
-                "w-full text-left px-3 py-2 hover:bg-accent",
-                idx === activeIdx && "bg-accent"
-              )}
-              onMouseEnter={() => setActiveIdx(idx)}
-              onClick={() => pick(idx)}
-            >
-              <div className="text-sm font-medium">{it.name}</div>
-              <div className="text-xs text-muted-foreground">{it.address}</div>
-            </button>
-          ))}
+          {loading && <div className="px-3 py-2 text-sm text-muted-foreground">Searching…</div>}
+          {!loading &&
+            items.map((it, idx) => (
+              <button
+                key={`${it.source}-${it.latitude}-${it.longitude}-${idx}`}
+                type="button"
+                className={cn("w-full text-left px-3 py-2 hover:bg-accent", idx === activeIdx && "bg-accent")}
+                onMouseEnter={() => setActiveIdx(idx)}
+                onClick={() => pick(idx)}
+              >
+                <div className="text-sm font-medium">{it.name}</div>
+                <div className="text-xs text-muted-foreground">{it.address}</div>
+              </button>
+            ))}
           {!loading && items.length === 0 && (
             <div className="px-3 py-2 text-sm text-muted-foreground">No suggestions</div>
           )}

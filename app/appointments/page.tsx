@@ -68,7 +68,7 @@ type PickedPlace = {
   address: string
   latitude: number
   longitude: number
-  source: "mapbox" | "nominatim"
+  source: "mapbox" | "nominatim" | "locationiq"
 }
 
 /* -------------------- Helpers -------------------- */
@@ -381,12 +381,14 @@ export default function AppointmentsPage() {
       })
     } else if (sortBy === "proximity") {
       copy.sort((a, b) => {
-        const da = (a.latitude != null && a.longitude != null && userLocation)
-          ? calculateDistance(userLocation.lat, userLocation.lng, a.latitude, a.longitude)
-          : Number.POSITIVE_INFINITY
-        const db = (b.latitude != null && b.longitude != null && userLocation)
-          ? calculateDistance(userLocation.lat, userLocation.lng, b.latitude, b.longitude)
-          : Number.POSITIVE_INFINITY
+        const da =
+          a.latitude != null && a.longitude != null && userLocation
+            ? calculateDistance(userLocation.lat, userLocation.lng, a.latitude, a.longitude)
+            : Number.POSITIVE_INFINITY
+        const db =
+          b.latitude != null && b.longitude != null && userLocation
+            ? calculateDistance(userLocation.lat, userLocation.lng, b.latitude, b.longitude)
+            : Number.POSITIVE_INFINITY
         return da - db
       })
     }
@@ -414,22 +416,22 @@ export default function AppointmentsPage() {
 
   return (
     <div className="md:pl-64 w-full overflow-x-hidden">
-      <div className="p-6 space-y-6">
+      <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
         {/* Header */}
-        <div className="flex items-center justify-between gap-3 flex-wrap">
-          <div>
-            <h1 className="text-3xl font-bold">Location & Time Reminders</h1>
-            <p className="text-muted-foreground mt-1">
+        <div className="flex items-start sm:items-center justify-between gap-3 flex-col sm:flex-row">
+          <div className="w-full">
+            <h1 className="text-2xl sm:text-3xl font-bold">Location &amp; Time Reminders</h1>
+            <p className="text-muted-foreground mt-1 text-sm sm:text-base">
               Geo-tagged nudges and optional alarm times that fit ADHD rhythms
             </p>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 w-full sm:w-auto">
             {/* Sort control */}
-            <div className="flex items-center gap-2 mr-2">
-              <Label className="text-sm text-muted-foreground">Sort</Label>
+            <div className="flex items-center gap-2 mr-2 ml-auto sm:ml-0">
+              <Label className="text-xs sm:text-sm text-muted-foreground">Sort</Label>
               <Select value={sortBy} onValueChange={(v: "created" | "scheduled" | "proximity") => setSortBy(v)}>
-                <SelectTrigger className="w-36 sm:w-44">
+                <SelectTrigger className="w-36 sm:w-44 h-9 sm:h-10">
                   <SelectValue placeholder="Sort by" />
                 </SelectTrigger>
                 <SelectContent>
@@ -440,10 +442,10 @@ export default function AppointmentsPage() {
               </Select>
             </div>
 
-            {/* Add */}
+            {/* Add (hidden on mobile; FAB shown below) */}
             <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
               <DialogTrigger asChild>
-                <Button>
+                <Button className="hidden sm:inline-flex">
                   <Plus className="h-4 w-4 mr-2" />
                   Add Reminder
                 </Button>
@@ -486,14 +488,14 @@ export default function AppointmentsPage() {
 
         {/* Location Status */}
         <Card>
-          <CardContent className="pt-6">
+          <CardContent className="pt-4 sm:pt-6">
             <div className="flex items-center gap-3">
               <Navigation className="h-5 w-5 text-blue-600" />
               <div className="flex-1">
                 {locationPermission === "granted" ? (
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-medium text-green-600">Location access enabled</span>
-                    <Badge variant="secondary">{nearbyAppointments.length} nearby</Badge>
+                    <Badge variant="secondary" className="text-[11px] py-0.5">{nearbyAppointments.length} nearby</Badge>
                   </div>
                 ) : locationPermission === "denied" ? (
                   <span className="text-sm font-medium text-red-600">Location access denied</span>
@@ -600,6 +602,16 @@ export default function AppointmentsPage() {
           </DialogContent>
         </Dialog>
       </div>
+
+      {/* Mobile FAB */}
+      <button
+        type="button"
+        onClick={() => setIsDialogOpen(true)}
+        className="sm:hidden fixed bottom-4 right-4 z-40 h-14 w-14 rounded-full shadow-xl bg-primary text-primary-foreground active:scale-95 transition"
+        aria-label="Add Reminder"
+      >
+        <Plus className="h-6 w-6 mx-auto" />
+      </button>
     </div>
   )
 }
@@ -709,6 +721,8 @@ function AppointmentCard({
             size="icon"
             onClick={() => onToggleComplete(appointment.id)}
             className={cn("mt-1 flex-shrink-0", appointment.completed && "text-green-600")}
+            aria-label={appointment.completed ? "Mark as incomplete" : "Mark as complete"}
+            title={appointment.completed ? "Mark as incomplete" : "Mark as complete"}
           >
             <CheckCircle2 className={cn("h-5 w-5", appointment.completed && "fill-current")} />
           </Button>
@@ -716,11 +730,11 @@ function AppointmentCard({
           <div className="flex-1 min-w-0">
             <div className="flex items-start justify-between gap-4">
               <div className="flex-1">
-                <h3 className={cn("font-semibold text-lg break-words", appointment.completed && "line-through text-gray-500")}>
+                <h3 className={cn("font-semibold text-base sm:text-lg break-words", appointment.completed && "line-through text-gray-500")}>
                   {appointment.title || "Untitled reminder"}
                 </h3>
                 {appointment.description && (
-                  <p className="text-gray-600 dark:text-gray-300 mt-1 break-words">{appointment.description}</p>
+                  <p className="text-gray-600 dark:text-gray-300 mt-1 break-words text-sm sm:text-base">{appointment.description}</p>
                 )}
 
                 {/* Location line */}
@@ -750,7 +764,7 @@ function AppointmentCard({
                     <ImageDisplay
                       src={appointment.image_url || "/placeholder.svg"}
                       alt={`Image for ${appointment.title || "reminder"}`}
-                      className="w-full max-w-full h-auto md:max-w-xs"
+                      className="w-full max-w-full h-auto md:max-w-xs max-h-48 object-cover rounded-lg"
                     />
                   </div>
                 )}
@@ -764,9 +778,7 @@ function AppointmentCard({
                     Alarm at {formatDateTime(appointment.scheduled_at, appointment.schedule_timezone ?? undefined)}
                   </p>
                 )}
-                {appointment.time_alert_sent && (
-                  <p className="text-xs text-green-600 mt-2">Alarm sent</p>
-                )}
+                {appointment.time_alert_sent && <p className="text-xs text-green-600 mt-2">Alarm sent</p>}
               </div>
 
               <div className="flex flex-col items-end gap-2">
@@ -778,12 +790,12 @@ function AppointmentCard({
                     variant="destructive"
                     size="sm"
                     onClick={() => onDelete(appointment)}
-                    className="h-8"
+                    className="h-8 px-2 sm:px-3"
                     aria-label="Delete reminder"
                     title="Delete"
                   >
-                    <Trash2 className="h-4 w-4 mr-1" />
-                    Delete
+                    <Trash2 className="h-4 w-4" />
+                    <span className="hidden sm:inline ml-1">Delete</span>
                   </Button>
 
                   {/* Edit */}
@@ -791,17 +803,15 @@ function AppointmentCard({
                     variant="outline"
                     size="sm"
                     onClick={() => onEdit(appointment)}
-                    className="h-8"
+                    className="h-8 bg-transparent px-2 sm:px-3"
                     aria-label="Edit reminder"
                     title="Edit"
                   >
-                    <Edit className="h-4 w-4 mr-1" />
-                    Edit
+                    <Edit className="h-4 w-4" />
+                    <span className="hidden sm:inline ml-1">Edit</span>
                   </Button>
                 </div>
-                {isNearby && !appointment.completed && (
-                  <Badge variant="default" className="bg-orange-600">Nearby!</Badge>
-                )}
+                {isNearby && !appointment.completed && <Badge variant="default" className="bg-orange-600">Nearby!</Badge>}
                 <div className="flex flex-col gap-1">
                   {appointment.voice_note_url && (
                     <Badge variant="outline" className="flex items-center gap-1">
@@ -912,6 +922,25 @@ function AppointmentForm({
         schedule_timezone = Intl.DateTimeFormat().resolvedOptions().timeZone
       }
 
+      // --- Normalize coordinates (fix common lon/lat mixups & bounds) ---
+      if (latitude != null && longitude != null) {
+        // If provider returned [lon, lat] but we stored as [lat, lon]
+        if (Math.abs(latitude) > 90 && Math.abs(longitude) <= 90) {
+          ;[latitude, longitude] = [longitude, latitude]
+        }
+
+        // Clamp longitude to [-180, 180]
+        if (longitude > 180 || longitude < -180) {
+          longitude = ((longitude + 180) % 360 + 360) % 360 - 180
+        }
+
+        // Kill the (0,0) pitfall
+        if (latitude === 0 && longitude === 0) {
+          latitude = null
+          longitude = null
+        }
+      }
+
       // 4) Build payload
       const payload: Record<string, any> = {
         title: (formData.title || "Untitled reminder").trim(),
@@ -1005,7 +1034,7 @@ function AppointmentForm({
             }}
             userLocation={userLocation || null}
             onPick={(place) => {
-              setPickedPlace(place)
+              setPickedPlace(place as PickedPlace)
               setFormData((p) => ({
                 ...p,
                 address: place.address,
@@ -1041,7 +1070,7 @@ function AppointmentForm({
           <Label>Priority</Label>
           <Select
             value={formData.priority}
-            onValueChange={(v: "low" | "medium" | "high") => setFormData((p) => ({ ...p, priority: v }))}
+            onValueChange={(v: "low" | "medium" | "high") => setFormData((p) => ({ ...p, priority: v })) }
           >
             <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
             <SelectContent>

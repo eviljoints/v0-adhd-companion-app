@@ -6,6 +6,7 @@ import { Analytics } from "@vercel/analytics/next"
 import { Navigation } from "@/components/navigation"
 import { Suspense } from "react"
 import "./globals.css"
+import CapacitorClient from "@/components/CapacitorClient"
 
 
 
@@ -50,6 +51,7 @@ export default function RootLayout({
         <div className="min-h-screen bg-background">
           <Suspense fallback={<div>Loading...</div>}>
             <Navigation />
+            <CapacitorClient />
             <main className="md:pl-64">{children}</main>
           </Suspense>
         </div>
