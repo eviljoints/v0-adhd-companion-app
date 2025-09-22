@@ -51,7 +51,7 @@ export default function RootLayout({
         <div className="min-h-screen bg-background">
           <Suspense fallback={<div>Loading...</div>}>
             <Navigation />
-            <main className="md:pl-64">{children}</main>
+            <main className="md:pl-64 pb-24 md:pb-0">{children}</main>
           </Suspense>
         </div>
         <Analytics />
