@@ -1,141 +1,183 @@
-// components/push-notifications.tsx
-"use client";
+"use client"
 
-import { useEffect, useState } from "react";
-import type { User } from "@supabase/supabase-js";
-import { Button } from "@/components/ui/button";
-import { useAlarmSound } from "@/lib/use-alarm-sound";
+import { useEffect, useState } from "react"
+import type { User } from "@supabase/supabase-js"
 
-const PUBLIC_KEY_B64 = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY as string;
+/**
+ * Small helper to request/verify Notification permission and register the SW.
+ * You already render <PushNotificationManager user={user} /> in the page.
+ */
+export function PushNotificationManager({ user }: { user: User | null }) {
+  const [perm, setPerm] = useState<NotificationPermission>(
+    typeof Notification !== "undefined" ? Notification.permission : "default",
+  )
+  const [ready, setReady] = useState(false)
 
-function urlBase64ToUint8Array(base64String: string) {
-  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
-  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
-  const rawData =
-    typeof window !== "undefined" ? window.atob(base64) : Buffer.from(base64, "base64").toString("binary");
-  const outputArray = new Uint8Array(rawData.length);
-  for (let i = 0; i < rawData.length; ++i) outputArray[i] = rawData.charCodeAt(i);
-  return outputArray;
+  useEffect(() => {
+    let mounted = true
+    ;(async () => {
+      try {
+        if ("serviceWorker" in navigator) {
+          await navigator.serviceWorker.register("/sw.js")
+          const reg = await navigator.serviceWorker.ready
+          if (mounted && reg) setReady(true)
+        }
+      } catch {
+        // ignore
+      }
+    })()
+    return () => {
+      mounted = false
+    }
+  }, [])
+
+  const request = async () => {
+    try {
+      if (typeof Notification === "undefined") return
+      const res = await Notification.requestPermission()
+      setPerm(res)
+    } catch {}
+  }
+
+  const test = async () => {
+    try {
+      if (typeof Notification === "undefined" || Notification.permission !== "granted") return
+      const reg = await navigator.serviceWorker?.ready
+      if (reg?.showNotification) {
+        await reg.showNotification("ADHD Companion", {
+          body: "Test notification — it works! 🎉",
+          tag: "test",
+        })
+      } else {
+        new Notification("ADHD Companion", { body: "Test notification — it works! 🎉", tag: "test" })
+      }
+    } catch {}
+  }
+
+  const canNotify = typeof Notification !== "undefined"
+  return (
+    <div className="flex gap-2 items-center">
+      {canNotify ? (
+        perm === "granted" ? (
+          <button className="inline-flex h-9 items-center rounded-md border px-3 text-sm" onClick={test}>
+            Test Push
+          </button>
+        ) : (
+          <button className="inline-flex h-9 items-center rounded-md bg-primary px-3 text-sm text-primary-foreground"
+                  onClick={request}>
+            Enable Push
+          </button>
+        )
+      ) : (
+        <span className="text-sm text-muted-foreground">Push not supported</span>
+      )}
+    </div>
+  )
 }
 
-export function PushNotificationManager({ user }: { user: User | null }) {
-  const [ready, setReady] = useState(false);
-  const [subscribed, setSubscribed] = useState(false);
-  const [permission, setPermission] = useState<NotificationPermission>(
-    typeof Notification !== "undefined" ? Notification.permission : "default"
-  );
+/**
+ * Lightweight geofence watcher for web (foreground/background via SW push depends
+ * on your backend). This class exists so `new LocationNotificationService(user)` works.
+ * It uses watchPosition with high accuracy and checks distance against `trigger_distance`.
+ */
+export class LocationNotificationService {
+  private user: User | null
+  private watchId: number | null = null
+  private targets: Array<{
+    id: string
+    title?: string | null
+    latitude: number
+    longitude: number
+    trigger_distance: number
+    location_name?: string | null
+  }> = []
+  private alreadyNotified = new Set<string>()
 
-  const { ready: soundReady, ensureReady, play } = useAlarmSound();
+  constructor(user: User | null) {
+    this.user = user
+  }
 
-  // Register SW + subscribe to push
-  useEffect(() => {
-    (async () => {
-      if (!user) return;
-      if (!("serviceWorker" in navigator) || !("PushManager" in window)) return;
+  startWatching(targets: Array<{
+    id: string
+    title?: string | null
+    latitude: number | null
+    longitude: number | null
+    trigger_distance: number
+    location_name?: string | null
+  }>) {
+    // Normalize and keep only valid geolocated targets
+    this.targets = (targets || [])
+      .filter(t => t.latitude != null && t.longitude != null)
+      .map(t => ({
+        id: t.id,
+        title: t.title ?? "Reminder",
+        latitude: t.latitude as number,
+        longitude: t.longitude as number,
+        trigger_distance: t.trigger_distance,
+        location_name: t.location_name ?? null,
+      }))
 
-      try {
-        const reg = await navigator.serviceWorker.register("/sw.js");
-        await navigator.serviceWorker.ready;
+    if (!("geolocation" in navigator)) return
 
-        // Request permission early
-        let perm = Notification.permission;
-        if (perm !== "granted") perm = await Notification.requestPermission();
-        setPermission(perm);
-        if (perm !== "granted") {
-          setReady(true);
-          return;
-        }
-
-        // Subscribe to push
-        const sub = await reg.pushManager.getSubscription();
-        if (!sub) {
-          const newSub = await reg.pushManager.subscribe({
-            userVisibleOnly: true,
-            applicationServerKey: urlBase64ToUint8Array(PUBLIC_KEY_B64),
-          });
-          setSubscribed(true);
-          await fetch("/api/push/subscribe", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ subscription: newSub.toJSON() }),
-          });
-        } else {
-          setSubscribed(true);
-          await fetch("/api/push/subscribe", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ subscription: sub.toJSON() }),
-          });
-        }
-      } catch (e) {
-        console.error("Push setup failed:", e);
-      } finally {
-        setReady(true);
-      }
-    })();
-  }, [user]);
-
-  // Listen for SW “play-sound” messages
-  useEffect(() => {
-    if (!("serviceWorker" in navigator)) return;
-    const handler = (evt: MessageEvent) => {
-      if (evt.data?.type === "play-sound") {
-        play(); // beep if page is open
-      }
-    };
-    navigator.serviceWorker.addEventListener("message", handler);
-    return () => navigator.serviceWorker.removeEventListener("message", handler);
-  }, [play]);
-
-  const handleUnsubscribe = async () => {
-    try {
-      const reg = await navigator.serviceWorker.ready;
-      const sub = await reg.pushManager.getSubscription();
-      if (sub) {
-        await fetch("/api/push/unsubscribe", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ endpoint: sub.endpoint }),
-        });
-        await sub.unsubscribe();
-        setSubscribed(false);
-      }
-    } catch (e) {
-      console.error("Unsubscribe failed:", e);
+    // Clear previous watch
+    if (this.watchId != null) {
+      navigator.geolocation.clearWatch(this.watchId)
+      this.watchId = null
     }
-  };
 
-  if (!user) return null;
+    // Watch with high accuracy
+    this.watchId = navigator.geolocation.watchPosition(
+      (pos) => this.onPosition(pos),
+      () => {}, // swallow errors
+      { enableHighAccuracy: true, maximumAge: 5000, timeout: 20000 },
+    )
+  }
 
-  return (
-    <div className="mt-4 flex items-center gap-3 flex-wrap">
-      {!ready ? (
-        <p className="text-sm text-muted-foreground">Setting up notifications…</p>
-      ) : permission !== "granted" ? (
-        <p className="text-sm text-orange-600">Notifications are blocked. Enable them in your browser settings.</p>
-      ) : subscribed ? (
-        <>
-          <p className="text-sm text-green-600">Push notifications enabled</p>
-          <Button variant="outline" size="sm" className="bg-transparent" onClick={handleUnsubscribe}>
-            Disable
-          </Button>
-        </>
-      ) : (
-        <p className="text-sm text-muted-foreground">Push not active.</p>
-      )}
+  stopWatching() {
+    if (this.watchId != null && "geolocation" in navigator) {
+      navigator.geolocation.clearWatch(this.watchId)
+    }
+    this.watchId = null
+  }
 
-      {/* Sound unlock / test */}
-      <Button
-        variant="outline"
-        size="sm"
-        className="bg-transparent"
-        onClick={async () => {
-          await ensureReady();
-          play(); // test chime so the user knows it’s enabled
-        }}
-      >
-        {soundReady ? "Test alert sound" : "Enable alert sound"}
-      </Button>
-    </div>
-  );
+  private onPosition(position: GeolocationPosition) {
+    if (!this.targets.length) return
+    const { latitude, longitude, accuracy } = position.coords
+    const acc = Number.isFinite(accuracy) ? accuracy : 0
+
+    for (const t of this.targets) {
+      const meters = haversineMeters(latitude, longitude, t.latitude, t.longitude)
+      // Allow for GPS noise: if within (trigger + accuracy), treat as inside
+      if (meters <= t.trigger_distance + acc) {
+        if (!this.alreadyNotified.has(t.id)) {
+          this.alreadyNotified.add(t.id)
+          this.notify(t.title || "Reminder", t.location_name || "You're nearby")
+        }
+      }
+    }
+  }
+
+  private async notify(title: string, body: string) {
+    try {
+      if (typeof Notification === "undefined" || Notification.permission !== "granted") return
+      const reg = await navigator.serviceWorker?.ready
+      if (reg?.showNotification) {
+        await reg.showNotification(title, { body, tag: `geo-${title}` })
+      } else {
+        new Notification(title, { body, tag: `geo-${title}` })
+      }
+    } catch {}
+  }
+}
+
+function haversineMeters(lat1: number, lon1: number, lat2: number, lon2: number) {
+  const R = 6371e3
+  const toRad = (d: number) => (d * Math.PI) / 180
+  const dLat = toRad(lat2 - lat1)
+  const dLon = toRad(lon2 - lon1)
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+  return R * c
 }
