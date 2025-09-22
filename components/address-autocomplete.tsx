@@ -1,23 +1,24 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { Input } from "@/components/ui/input"
 import { Card } from "@/components/ui/card"
 import { cn } from "@/lib/utils"
 
-type Place = {
+// Updated to include LocationIQ as a source
+export type Place = {
   name: string
   address: string
   latitude: number
   longitude: number
-  source: "mapbox" | "nominatim"
+  source: "mapbox" | "nominatim" | "locationiq"
 }
 
 export function AddressAutocomplete({
   value,
   onValueChange,
   userLocation, // { lat, lng } | null
-  onPick,       // (place: Place) => void
+  onPick, // (place: Place) => void
   placeholder = "Start typing an address or place…",
   className,
 }: {
@@ -54,17 +55,45 @@ export function AddressAutocomplete({
       const params = new URLSearchParams({ q })
       if (userLocation) {
         params.set("lat", String(userLocation.lat))
-        params.set("lng", String(userLocation.lng))
+        // NOTE: our new /api/places route expects `lon` (not `lng`)
+        params.set("lon", String(userLocation.lng))
       }
+
       try {
         const r = await fetch(`/api/places?${params.toString()}`, { signal: ac.signal, cache: "no-store" })
+        if (!r.ok) throw new Error(`Places search failed: ${r.status}`)
         const j = await r.json()
+        if (ac.signal.aborted) return
+
+        // Our new LocationIQ-backed route returns an array of results.
+        // But to be defensive, support various shapes: [..], {results:[..]}, {features:[..]}
+        const raw: any[] = Array.isArray(j) ? j : (j.results || j.features || [])
+
+        const mapped: Place[] = raw
+          .map((it: any) => {
+            // LocationIQ fields: display_place, display_name, lat, lon
+            const lat = Number(it.lat ?? it.latitude ?? it.geometry?.lat ?? it.center?.[1])
+            const lon = Number(it.lon ?? it.longitude ?? it.geometry?.lon ?? it.center?.[0])
+            const name = it.display_place || it.name || it.address?.name || (it.display_name?.split(",")[0] ?? "")
+            const address = it.display_name || it.description || it.address?.label || it.formatted || ""
+            if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null
+            return {
+              name: name || address || q,
+              address: address || name || "",
+              latitude: lat,
+              longitude: lon,
+              source: "locationiq" as const,
+            }
+          })
+          .filter(Boolean) as Place[]
+
+        setItems(mapped)
+        setOpen(true)
+      } catch (e) {
         if (!ac.signal.aborted) {
-          setItems(j.features || [])
+          setItems([])
           setOpen(true)
         }
-      } catch {
-        if (!ac.signal.aborted) setItems([])
       } finally {
         if (!ac.signal.aborted) setLoading(false)
       }
@@ -89,10 +118,10 @@ export function AddressAutocomplete({
     if (!open || items.length === 0) return
     if (e.key === "ArrowDown") {
       e.preventDefault()
-      setActiveIdx(i => Math.min(i + 1, items.length - 1))
+      setActiveIdx((i) => Math.min(i + 1, items.length - 1))
     } else if (e.key === "ArrowUp") {
       e.preventDefault()
-      setActiveIdx(i => Math.max(i - 1, 0))
+      setActiveIdx((i) => Math.max(i - 1, 0))
     } else if (e.key === "Enter") {
       e.preventDefault()
       pick(activeIdx)
@@ -107,7 +136,7 @@ export function AddressAutocomplete({
         value={value}
         onChange={(e) => onValueChange(e.target.value)}
         placeholder={placeholder}
-        onFocus={() => items.length > 0 && setOpen(true)}
+        onFocus={() => (items.length > 0 || loading) && setOpen(true)}
         onKeyDown={onKeyDown}
         aria-autocomplete="list"
         aria-expanded={open}
