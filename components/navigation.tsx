@@ -15,7 +15,19 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { Home, MapPin, Brain, Users, Settings, Menu, Bell, LogOut, User, NotepadTextDashed, Calendar, } from "lucide-react"
+import {
+  Home,
+  MapPin,
+  Brain,
+  Users,
+  Settings,
+  Menu,
+  Bell,
+  LogOut,
+  User,
+  NotepadTextDashed,
+  Calendar,
+} from "lucide-react"
 import { cn } from "@/lib/utils"
 import { createClient } from "@/lib/supabase/client"
 import type { User as SupabaseUser } from "@supabase/supabase-js"
@@ -25,9 +37,9 @@ const navigation = [
   { name: "Appointments", href: "/appointments", icon: MapPin },
   { name: "AI Coach", href: "/coach", icon: Brain },
   { name: "VIP Contacts", href: "/contacts", icon: Users },
-  { name : "screening", href: "/screening", icon: NotepadTextDashed },
+  { name: "screening", href: "/screening", icon: NotepadTextDashed },
   { name: "Settings", href: "/settings", icon: Settings },
-  { name: "calendar", href: "/calendar-sync", icon: Calendar }
+  { name: "calendar", href: "/calendar-sync", icon: Calendar },
 ]
 
 export function Navigation() {
@@ -44,13 +56,7 @@ export function Navigation() {
     supabase.auth.getUser().then(({ data: { user } }) => {
       setUser(user)
       if (user) {
-        supabase
-          .from("profiles")
-          .select("*")
-          .eq("id", user.id)
-          .single()
-          .then(({ data }) => setProfile(data))
-
+        supabase.from("profiles").select("*").eq("id", user.id).single().then(({ data }) => setProfile(data))
         fetchBadgeCounts(user.id)
       }
     })
@@ -60,13 +66,7 @@ export function Navigation() {
     } = supabase.auth.onAuthStateChange((event, session) => {
       setUser(session?.user ?? null)
       if (session?.user) {
-        supabase
-          .from("profiles")
-          .select("*")
-          .eq("id", session.user.id)
-          .single()
-          .then(({ data }) => setProfile(data))
-
+        supabase.from("profiles").select("*").eq("id", session.user.id).single().then(({ data }) => setProfile(data))
         fetchBadgeCounts(session.user.id)
       } else {
         setProfile(null)
@@ -190,6 +190,7 @@ export function Navigation() {
     </DropdownMenu>
   )
 
+  // When logged out, show a simple mobile header
   if (!user) {
     return (
       <div className="md:hidden">
@@ -208,8 +209,8 @@ export function Navigation() {
 
   return (
     <>
-      {/* Desktop Sidebar */}
-      <div className="hidden md:flex md:w-64 md:flex-col md:fixed md:inset-y-0">
+      {/* Desktop Sidebar (fixed left) */}
+      <div className="hidden md:flex md:w-64 md:flex-col md:fixed md:inset-y-0 md:left-0 z-40">
         <div className="flex flex-col flex-grow pt-5 bg-card border-r overflow-y-auto">
           <div className="flex items-center flex-shrink-0 px-4">
             <Brain className="h-8 w-8 text-primary" />
@@ -246,13 +247,13 @@ export function Navigation() {
             <span className="ml-2 font-semibold">ADHD Companion</span>
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="ghost" size="icon">
+            <Button variant="ghost" size="icon" aria-label="Notifications">
               <Bell className="h-5 w-5" />
             </Button>
             <UserMenu />
             <Sheet open={isOpen} onOpenChange={setIsOpen}>
               <SheetTrigger asChild>
-                <Button variant="ghost" size="icon">
+                <Button variant="ghost" size="icon" aria-label="Menu">
                   <Menu className="h-5 w-5" />
                 </Button>
               </SheetTrigger>
@@ -266,6 +267,37 @@ export function Navigation() {
             </Sheet>
           </div>
         </div>
+      </div>
+
+      {/* Mobile Bottom Bar (fixed) */}
+      <div className="fixed bottom-0 left-0 right-0 z-40 border-t bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/60 md:hidden">
+        <nav className="grid grid-cols-5">
+          {navigation.slice(0, 5).map((item) => {
+            const isActive = pathname === item.href
+            const badgeCount = badgeCounts[item.name]
+            return (
+              <Link
+                key={`bottom-${item.name}`}
+                href={item.href}
+                className={cn(
+                  "flex flex-col items-center justify-center py-2 text-xs",
+                  "transition-colors",
+                  isActive ? "text-primary" : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                <div className="relative">
+                  <item.icon className="h-5 w-5" />
+                  {badgeCount && badgeCount > 0 && (
+                    <span className="absolute -top-1 -right-2 inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-primary text-primary-foreground text-[10px] px-1 leading-none">
+                      {badgeCount}
+                    </span>
+                  )}
+                </div>
+                <span className="mt-1">{item.name}</span>
+              </Link>
+            )
+          })}
+        </nav>
       </div>
     </>
   )

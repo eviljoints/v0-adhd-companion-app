@@ -1,3 +1,4 @@
+// app/page.tsx
 import { redirect } from "next/navigation"
 import { createClient } from "@/lib/supabase/server"
 import { DashboardClient } from "@/components/dashboard-client"
@@ -46,10 +47,11 @@ export default async function HomePage() {
       user={user}
       profile={profile}
       stats={{
-        activeReminders,
-        vipContactsCount,
-        streakDays,
-        completedToday,
+        // add hrefs for the two stats you want to be clickable
+        activeReminders: { label: "Active Reminders", value: activeReminders, href: "/appointments" },
+        vipContactsCount: { label: "VIP Contacts", value: vipContactsCount, href: "/contacts" },
+        streakDays: { label: "Streak Days", value: streakDays }, // no link requested
+        completedToday: { label: "Completed Today", value: completedToday }, // no link requested
       }}
       recentAppointments={recentAppointments}
       contactsNeedingAttention={contactsNeedingAttention}

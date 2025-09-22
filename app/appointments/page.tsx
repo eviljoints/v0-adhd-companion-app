@@ -397,7 +397,7 @@ export default function AppointmentsPage() {
 
   if (isLoading) {
     return (
-      <div className="md:pl-64">
+      <div className="md:pl-64 w-full overflow-x-hidden">
         <div className="p-6">
           <div className="animate-pulse space-y-6">
             <div className="h-8 bg-muted rounded w-1/4"></div>
@@ -413,7 +413,7 @@ export default function AppointmentsPage() {
   const nearbyAppointments = activeAppointments.filter(isNearby)
 
   return (
-    <div className="md:pl-64">
+    <div className="md:pl-64 w-full overflow-x-hidden">
       <div className="p-6 space-y-6">
         {/* Header */}
         <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -429,7 +429,7 @@ export default function AppointmentsPage() {
             <div className="flex items-center gap-2 mr-2">
               <Label className="text-sm text-muted-foreground">Sort</Label>
               <Select value={sortBy} onValueChange={(v: "created" | "scheduled" | "proximity") => setSortBy(v)}>
-                <SelectTrigger className="w-[180px]">
+                <SelectTrigger className="w-36 sm:w-44">
                   <SelectValue placeholder="Sort by" />
                 </SelectTrigger>
                 <SelectContent>
@@ -448,7 +448,7 @@ export default function AppointmentsPage() {
                   Add Reminder
                 </Button>
               </DialogTrigger>
-              <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto">
+              <DialogContent className="w-[95vw] sm:max-w-md max-h-[90vh] overflow-y-auto">
                 <DialogHeader>
                   <DialogTitle>Create Reminder</DialogTitle>
                   <DialogDescription>Only the title is required. Everything else is optional.</DialogDescription>
@@ -582,7 +582,7 @@ export default function AppointmentsPage() {
 
         {/* Edit Dialog */}
         <Dialog open={!!editingAppointment} onOpenChange={() => setEditingAppointment(null)}>
-          <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto">
+          <DialogContent className="w-[95vw] sm:max-w-md max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Edit Reminder</DialogTitle>
               <DialogDescription>Update any detail—you don’t have to fill everything.</DialogDescription>
@@ -716,11 +716,11 @@ function AppointmentCard({
           <div className="flex-1 min-w-0">
             <div className="flex items-start justify-between gap-4">
               <div className="flex-1">
-                <h3 className={cn("font-semibold text-lg", appointment.completed && "line-through text-gray-500")}>
+                <h3 className={cn("font-semibold text-lg break-words", appointment.completed && "line-through text-gray-500")}>
                   {appointment.title || "Untitled reminder"}
                 </h3>
                 {appointment.description && (
-                  <p className="text-gray-600 dark:text-gray-300 mt-1">{appointment.description}</p>
+                  <p className="text-gray-600 dark:text-gray-300 mt-1 break-words">{appointment.description}</p>
                 )}
 
                 {/* Location line */}
@@ -750,7 +750,7 @@ function AppointmentCard({
                     <ImageDisplay
                       src={appointment.image_url || "/placeholder.svg"}
                       alt={`Image for ${appointment.title || "reminder"}`}
-                      className="max-w-xs"
+                      className="w-full max-w-full h-auto md:max-w-xs"
                     />
                   </div>
                 )}
@@ -1021,14 +1021,14 @@ function AppointmentForm({
       )}
 
       {/* Distance & Priority */}
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
           <Label>Reminder Distance</Label>
           <Select
             value={formData.trigger_distance}
             onValueChange={(v) => setFormData((p) => ({ ...p, trigger_distance: v }))}
           >
-            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="50">50m (very close)</SelectItem>
               <SelectItem value="100">100m (close)</SelectItem>
@@ -1043,7 +1043,7 @@ function AppointmentForm({
             value={formData.priority}
             onValueChange={(v: "low" | "medium" | "high") => setFormData((p) => ({ ...p, priority: v }))}
           >
-            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="low">Low</SelectItem>
               <SelectItem value="medium">Medium</SelectItem>
