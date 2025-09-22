@@ -1,14 +1,13 @@
-import type React from "react"
-import { Metadata, viewport } from "next"
+// app/layout.tsx
+import type { Metadata, Viewport } from "next"
 import { GeistSans } from "geist/font/sans"
 import { GeistMono } from "geist/font/mono"
 import { Analytics } from "@vercel/analytics/next"
-import { Navigation } from "@/components/navigation"
 import { Suspense } from "react"
-import "./globals.css"
+
+import { Navigation } from "@/components/navigation"
 import CapacitorClient from "@/components/CapacitorClient"
-
-
+import "./globals.css"
 
 export const metadata: Metadata = {
   title: "ADHD Companion - Stay Organized & Motivated",
@@ -16,13 +15,6 @@ export const metadata: Metadata = {
   generator: "v0.app",
   manifest: "/manifest.json",
   themeColor: "#3b82f6",
-  viewport: { viewport,
-    width: "device-width",
-    initialScale: 1,
-    maximumScale: 1,
-    userScalable: false,
-    viewportFit: "cover",
-  },
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
@@ -30,14 +22,23 @@ export const metadata: Metadata = {
   },
 }
 
+// NOTE: viewport is exported separately, with the Viewport type.
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+  viewportFit: "cover",
+}
+
 export default function RootLayout({
   children,
-}: Readonly<{
-  children: React.ReactNode
-}>) {
+}: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en">
       <head>
+        {/* These meta tags are optional; Next will also inject based on metadata/viewport.
+            You can keep or remove duplicates as you prefer. */}
         <link rel="apple-touch-icon" href="/icon-192x192.png" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="default" />
