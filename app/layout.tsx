@@ -1,6 +1,6 @@
-// app\layout.tsx
+// app/layout.tsx
 import type React from "react"
-import { Metadata, Viewport } from "next"
+import type { Metadata, Viewport } from "next"
 import { GeistSans } from "geist/font/sans"
 import { GeistMono } from "geist/font/mono"
 import { Analytics } from "@vercel/analytics/next"
@@ -8,20 +8,15 @@ import { Navigation } from "@/components/navigation"
 import { Suspense } from "react"
 import "./globals.css"
 
-
-
 export const metadata: Metadata = {
   title: "ADHD Companion - Stay Organized & Motivated",
   description: "Location-based reminders, AI coaching, and VIP contacts to help manage ADHD",
   generator: "v0.app",
   manifest: "/manifest.json",
   themeColor: "#3b82f6",
-  appleWebApp: {
-    capable: true,
-    statusBarStyle: "default",
-    title: "ADHD Companion",
-  },
+  appleWebApp: { capable: true, statusBarStyle: "default", title: "ADHD Companion" },
 }
+
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
@@ -30,11 +25,7 @@ export const viewport: Viewport = {
   viewportFit: "cover",
 }
 
-export default function RootLayout({
-  children,
-}: Readonly<{
-  children: React.ReactNode
-}>) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
       <head>
@@ -51,11 +42,10 @@ export default function RootLayout({
         <div className="min-h-screen bg-background">
           <Suspense fallback={<div>Loading...</div>}>
             <Navigation />
-            // app/layout.tsx
-<main className="md:pl-64 pb-[calc(64px+env(safe-area-inset-bottom))]">
-  {children}
-</main>
-
+            {/* Sidebar offset on md+, & bottom padding for mobile bottom bar */}
+            <main className="md:pl-64 pb-[calc(64px+env(safe-area-inset-bottom))]">
+              {children}
+            </main>
           </Suspense>
         </div>
         <Analytics />

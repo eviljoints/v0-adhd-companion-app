@@ -1,3 +1,4 @@
+//components\mobile-optimizations.tsx
 "use client"
 
 import type React from "react"
