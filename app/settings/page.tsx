@@ -1,4 +1,3 @@
-// app/settings/page.tsx
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
@@ -13,10 +12,27 @@ import { Bell, MapPin, Brain, Shield } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 
 type SettingsShape = {
-  notifications: { appointments: boolean; coaching: boolean; contacts: boolean; email: boolean }
-  location: { enabled: boolean; accuracy: "low" | "medium" | "high"; background: boolean }
-  ai: { coaching_frequency: "hourly" | "daily" | "weekly" | "custom"; personality: "supportive" | "direct" | "gentle" | "energetic"; reminders: boolean }
-  privacy: { data_sharing: boolean; analytics: boolean; location_history: boolean }
+  notifications: {
+    appointments: boolean
+    coaching: boolean
+    contacts: boolean
+    email: boolean
+  }
+  location: {
+    enabled: boolean
+    accuracy: "low" | "medium" | "high"
+    background: boolean
+  }
+  ai: {
+    coaching_frequency: "hourly" | "daily" | "weekly" | "custom"
+    personality: "supportive" | "direct" | "gentle" | "energetic"
+    reminders: boolean
+  }
+  privacy: {
+    data_sharing: boolean
+    analytics: boolean
+    location_history: boolean
+  }
 }
 
 const DEFAULTS: SettingsShape = {
@@ -35,32 +51,47 @@ export default function SettingsPage() {
   const [serverMsg, setServerMsg] = useState<string | null>(null)
   const [userId, setUserId] = useState<string | null>(null)
 
+  // ---------- Auth + initial load ----------
   useEffect(() => {
     (async () => {
       const { data } = await supabase.auth.getUser()
       const user = data?.user
-      if (!user) { router.push("/auth/login"); return }
+      if (!user) {
+        router.push("/auth/login")
+        return
+      }
       setUserId(user.id)
 
+      // Try to load existing settings
       const { data: row, error } = await supabase
         .from("user_settings")
         .select("data")
         .eq("user_id", user.id)
         .single()
 
-      if (!error && row?.data) setSettings({ ...DEFAULTS, ...row.data })
-      else setSettings(DEFAULTS)
-
+      if (!error && row?.data) {
+        setSettings({ ...DEFAULTS, ...row.data })
+      } else {
+        // create a local default; will persist on Save
+        setSettings(DEFAULTS)
+      }
       setIsLoading(false)
     })()
   }, [router, supabase])
 
+  // ---------- Helpers ----------
   const updateSetting = <K1 extends keyof SettingsShape, K2 extends keyof SettingsShape[K1]>(
     category: K1,
     key: K2,
     value: SettingsShape[K1][K2],
   ) => {
-    setSettings((prev) => ({ ...prev, [category]: { ...prev[category], [key]: value } }))
+    setSettings((prev) => ({
+      ...prev,
+      [category]: {
+        ...prev[category],
+        [key]: value,
+      },
+    }))
   }
 
   async function ensureNotificationPermission(): Promise<boolean> {
@@ -68,11 +99,16 @@ export default function SettingsPage() {
       if (typeof Notification === "undefined") return false
       if (Notification.permission === "granted") return true
       const res = await Notification.requestPermission()
+      // Optionally register service worker (if not already)
       if ("serviceWorker" in navigator) {
-        try { await navigator.serviceWorker.register("/sw.js") } catch {}
+        try {
+          await navigator.serviceWorker.register("/sw.js")
+        } catch {}
       }
       return res === "granted"
-    } catch { return false }
+    } catch {
+      return false
+    }
   }
 
   async function ensureLocationPermission(): Promise<boolean> {
@@ -87,16 +123,21 @@ export default function SettingsPage() {
   }
 
   async function onToggleNotifications(checked: boolean) {
+    // Ask for browser permission if turning on any push-like channels
     if (checked) {
       const ok = await ensureNotificationPermission()
-      if (!ok) setServerMsg("Notifications are blocked by the browser. Check site permissions.")
+      if (!ok) {
+        setServerMsg("Notifications are blocked by the browser. Check site permissions.")
+      }
     }
   }
 
   async function onToggleLocation(checked: boolean) {
     if (checked) {
       const ok = await ensureLocationPermission()
-      if (!ok) setServerMsg("Location permission denied. Enable it in your browser settings.")
+      if (!ok) {
+        setServerMsg("Location permission denied. Enable it in your browser settings.")
+      }
     }
   }
 
@@ -106,7 +147,11 @@ export default function SettingsPage() {
     setServerMsg(null)
     try {
       const { error } = await supabase.from("user_settings").upsert(
-        { user_id: userId, data: settings, updated_at: new Date().toISOString() },
+        {
+          user_id: userId,
+          data: settings,
+          updated_at: new Date().toISOString(),
+        },
         { onConflict: "user_id" },
       )
       if (error) throw error
@@ -120,11 +165,17 @@ export default function SettingsPage() {
 
   async function testNotification() {
     const ok = await ensureNotificationPermission()
-    if (!ok) { setServerMsg("Notifications are blocked by the browser."); return }
+    if (!ok) {
+      setServerMsg("Notifications are blocked by the browser.")
+      return
+    }
     try {
       const reg = await navigator.serviceWorker?.ready
       if (reg?.showNotification) {
-        await reg.showNotification("ADHD Companion", { body: "Test notification — if you see this, you’re set! 🎉", tag: "test" })
+        await reg.showNotification("ADHD Companion", {
+          body: "Test notification — if you see this, you’re set! 🎉",
+          tag: "test",
+        })
       } else {
         new Notification("ADHD Companion", { body: "Test notification — it works! 🎉", tag: "test" })
       }
@@ -135,7 +186,7 @@ export default function SettingsPage() {
 
   if (isLoading) {
     return (
-      <div className="w-full">
+      <div className="md:pl-64">
         <div className="p-6">
           <div className="animate-pulse space-y-6">
             <div className="h-8 bg-muted rounded w-1/4"></div>
@@ -147,7 +198,7 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="w-full">
+    <div className="md:pl-64">
       <div className="p-6 space-y-6">
         <div className="flex items-center justify-between">
           <div>
@@ -162,7 +213,9 @@ export default function SettingsPage() {
           </div>
         </div>
 
-        {serverMsg && <div className="text-sm">{serverMsg}</div>}
+        {serverMsg && (
+          <div className="text-sm">{serverMsg}</div>
+        )}
 
         <div className="grid gap-6">
           {/* Notifications */}
@@ -262,7 +315,9 @@ export default function SettingsPage() {
                     updateSetting("location", "accuracy", value)
                   }
                 >
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="low">Low (City level)</SelectItem>
                     <SelectItem value="medium">Medium (Neighborhood)</SelectItem>
@@ -274,7 +329,9 @@ export default function SettingsPage() {
               <div className="flex items-center justify-between">
                 <div className="space-y-0.5">
                   <Label>Background Location</Label>
-                  <p className="text-sm text-muted-foreground">Allow location checks while the app is in the background</p>
+                  <p className="text-sm text-muted-foreground">
+                    Allow location checks while the app is in the background (browser support varies)
+                  </p>
                 </div>
                 <Switch
                   checked={settings.location.background}
@@ -302,7 +359,9 @@ export default function SettingsPage() {
                     updateSetting("ai", "coaching_frequency", value)
                   }
                 >
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="hourly">Hourly</SelectItem>
                     <SelectItem value="daily">Daily</SelectItem>
@@ -320,7 +379,9 @@ export default function SettingsPage() {
                     updateSetting("ai", "personality", value)
                   }
                 >
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="supportive">Supportive &amp; Encouraging</SelectItem>
                     <SelectItem value="direct">Direct &amp; Practical</SelectItem>
