@@ -1,11 +1,10 @@
-// components/navigation.tsx
 "use client"
 
-import React, { useEffect, useState } from "react"
+import { useState, useEffect } from "react"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
-import { createPortal } from "react-dom"
 import { Button } from "@/components/ui/button"
+import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet"
 import { Badge } from "@/components/ui/badge"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import {
@@ -22,37 +21,31 @@ import {
   Brain,
   Users,
   Settings,
+  Menu,
+  Bell,
   LogOut,
   User,
-  ClipboardList,
+  NotepadTextDashed,
   Calendar,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { createClient } from "@/lib/supabase/client"
 import type { User as SupabaseUser } from "@supabase/supabase-js"
 
-type NavLink = { name: string; href: string; icon: React.ComponentType<{ className?: string }> }
-
-const NAV_LINKS: NavLink[] = [
+const navigation = [
   { name: "Home", href: "/", icon: Home },
   { name: "Appointments", href: "/appointments", icon: MapPin },
   { name: "AI Coach", href: "/coach", icon: Brain },
   { name: "VIP Contacts", href: "/contacts", icon: Users },
-  { name: "screening", href: "/screening", icon: ClipboardList },
+  { name: "screening", href: "/screening", icon: NotepadTextDashed },
   { name: "Settings", href: "/settings", icon: Settings },
   { name: "calendar", href: "/calendar-sync", icon: Calendar },
 ]
 
-function BodyPortal({ children }: { children: React.ReactNode }) {
-  const [mounted, setMounted] = useState(false)
-  useEffect(() => setMounted(true), [])
-  if (!mounted) return null
-  return createPortal(children, document.body)
-}
-
 export function Navigation() {
   const pathname = usePathname()
   const router = useRouter()
+  const [isOpen, setIsOpen] = useState(false)
   const [user, setUser] = useState<SupabaseUser | null>(null)
   const [profile, setProfile] = useState<any>(null)
   const [badgeCounts, setBadgeCounts] = useState<Record<string, number>>({})
@@ -60,26 +53,21 @@ export function Navigation() {
   useEffect(() => {
     const supabase = createClient()
 
-    // initial session + profile
-    supabase.auth.getUser().then(async ({ data: { user } }) => {
+    supabase.auth.getUser().then(({ data: { user } }) => {
       setUser(user)
       if (user) {
-        const { data: prof } = await supabase.from("profiles").select("*").eq("id", user.id).single()
-        setProfile(prof || null)
-        void fetchBadgeCounts(user.id)
+        supabase.from("profiles").select("*").eq("id", user.id).single().then(({ data }) => setProfile(data))
+        fetchBadgeCounts(user.id)
       }
     })
 
-    // auth changes
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (_, session) => {
-      const u = session?.user ?? null
-      setUser(u)
-      if (u) {
-        const { data: prof } = await supabase.from("profiles").select("*").eq("id", u.id).single()
-        setProfile(prof || null)
-        void fetchBadgeCounts(u.id)
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      setUser(session?.user ?? null)
+      if (session?.user) {
+        supabase.from("profiles").select("*").eq("id", session.user.id).single().then(({ data }) => setProfile(data))
+        fetchBadgeCounts(session.user.id)
       } else {
         setProfile(null)
         setBadgeCounts({})
@@ -91,30 +79,36 @@ export function Navigation() {
 
   const fetchBadgeCounts = async (userId: string) => {
     const supabase = createClient()
+
     try {
-      const [appointmentsRes, contactsRes] = await Promise.allSettled([
+      const [appointmentsResult, contactsResult] = await Promise.allSettled([
         supabase.from("appointments").select("*", { count: "exact" }).eq("user_id", userId).eq("completed", false),
         supabase.from("vip_contacts").select("*").eq("user_id", userId),
       ])
 
-      const counts: Record<string, number> = {}
+      const newBadgeCounts: Record<string, number> = {}
 
-      if (appointmentsRes.status === "fulfilled" && appointmentsRes.value.count) {
-        counts.Appointments = appointmentsRes.value.count
+      if (appointmentsResult.status === "fulfilled" && appointmentsResult.value.count) {
+        newBadgeCounts.Appointments = appointmentsResult.value.count
       }
 
-      if (contactsRes.status === "fulfilled" && contactsRes.value.data) {
-        const needing = contactsRes.value.data.filter((c: any) => {
-          if (!c.last_contacted) return true
-          const days = Math.floor((Date.now() - new Date(c.last_contacted).getTime()) / 86400000)
-          return days >= (c.contact_frequency_days || 7)
+      if (contactsResult.status === "fulfilled" && contactsResult.value.data) {
+        const contactsNeedingAttention = contactsResult.value.data.filter((contact: any) => {
+          if (!contact.last_contacted) return true
+          const daysSinceContact = Math.floor(
+            (Date.now() - new Date(contact.last_contacted).getTime()) / (1000 * 60 * 60 * 24),
+          )
+          return daysSinceContact >= (contact.contact_frequency_days || 7)
         })
-        if (needing.length > 0) counts["VIP Contacts"] = needing.length
+
+        if (contactsNeedingAttention.length > 0) {
+          newBadgeCounts["VIP Contacts"] = contactsNeedingAttention.length
+        }
       }
 
-      setBadgeCounts(counts)
-    } catch (e) {
-      console.error("badgeCounts error", e)
+      setBadgeCounts(newBadgeCounts)
+    } catch (error) {
+      console.error("Error fetching badge counts:", error)
     }
   }
 
@@ -124,30 +118,30 @@ export function Navigation() {
     router.push("/auth/login")
   }
 
-  const isActive = (href: string) =>
-    pathname === href || (href !== "/" && pathname?.startsWith(href))
-
-  const NavItems = () => (
-    <nav className="space-y-2">
-      {NAV_LINKS.map((item) => {
-        const active = isActive(item.href)
+  const NavItems = ({ mobile = false }) => (
+    <nav className={cn("space-y-2", mobile && "px-4")}>
+      {navigation.map((item) => {
+        const isActive = pathname === item.href
         const badgeCount = badgeCounts[item.name]
-        const Icon = item.icon
+
         return (
           <Link
             key={item.name}
             href={item.href}
+            onClick={() => mobile && setIsOpen(false)}
             className={cn(
               "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
-              active
+              isActive
                 ? "bg-primary text-primary-foreground"
-                : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                : "text-muted-foreground hover:text-foreground hover:bg-muted",
             )}
           >
-            <Icon className="h-4 w-4" />
+            <item.icon className="h-4 w-4" />
             {item.name}
-            {!!badgeCount && badgeCount > 0 && (
-              <Badge variant="secondary" className="ml-auto">{badgeCount}</Badge>
+            {badgeCount && badgeCount > 0 && (
+              <Badge variant="secondary" className="ml-auto">
+                {badgeCount}
+              </Badge>
             )}
           </Link>
         )
@@ -162,9 +156,7 @@ export function Navigation() {
           <Avatar className="h-8 w-8">
             <AvatarImage src={profile?.avatar_url || "/placeholder.svg"} alt={profile?.full_name || user?.email} />
             <AvatarFallback>
-              {profile?.full_name
-                ? profile.full_name.charAt(0).toUpperCase()
-                : user?.email?.charAt(0).toUpperCase()}
+              {profile?.full_name ? profile.full_name.charAt(0).toUpperCase() : user?.email?.charAt(0).toUpperCase()}
             </AvatarFallback>
           </Avatar>
         </Button>
@@ -178,22 +170,46 @@ export function Navigation() {
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
         <DropdownMenuItem asChild>
-          <Link href="/profile"><User className="mr-2 h-4 w-4" /><span>Profile</span></Link>
+          <Link href="/profile">
+            <User className="mr-2 h-4 w-4" />
+            <span>Profile</span>
+          </Link>
         </DropdownMenuItem>
         <DropdownMenuItem asChild>
-          <Link href="/settings"><Settings className="mr-2 h-4 w-4" /><span>Settings</span></Link>
+          <Link href="/settings">
+            <Settings className="mr-2 h-4 w-4" />
+            <span>Settings</span>
+          </Link>
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem onClick={handleSignOut}>
-          <LogOut className="mr-2 h-4 w-4" /><span>Log out</span>
+          <LogOut className="mr-2 h-4 w-4" />
+          <span>Log out</span>
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   )
 
+  // When logged out, show a simple mobile header
+  if (!user) {
+    return (
+      <div className="md:hidden">
+        <div className="flex items-center justify-between p-4 border-b bg-card">
+          <div className="flex items-center">
+            <Brain className="h-6 w-6 text-primary" />
+            <span className="ml-2 font-semibold">ADHD Companion</span>
+          </div>
+          <Button asChild>
+            <Link href="/auth/login">Sign In</Link>
+          </Button>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <>
-      {/* Desktop Sidebar (md+) */}
+      {/* Desktop Sidebar (fixed left) */}
       <div className="hidden md:flex md:w-64 md:flex-col md:fixed md:inset-y-0 md:left-0 z-40">
         <div className="flex flex-col flex-grow pt-5 bg-card border-r overflow-y-auto">
           <div className="flex items-center flex-shrink-0 px-4">
@@ -223,44 +239,66 @@ export function Navigation() {
         </div>
       </div>
 
-      {/* Mobile Bottom Bar (<md) */}
-      <BodyPortal>
-        <div
-          data-testid="mobile-bottom-bar"
-          className="fixed inset-x-0 bottom-0 z-[9999] border-t bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/60 md:hidden pb-[env(safe-area-inset-bottom)] pointer-events-auto"
-          role="navigation"
-          aria-label="Primary mobile"
-        >
-          <nav className="grid grid-cols-5 h-[64px]">
-            {NAV_LINKS.slice(0, 5).map((item) => {
-              const active = isActive(item.href)
-              const badgeCount = badgeCounts[item.name]
-              const Icon = item.icon
-              return (
-                <Link
-                  key={`bottom-${item.name}`}
-                  href={item.href}
-                  className={cn(
-                    "flex flex-col items-center justify-center text-xs transition-colors",
-                    active ? "text-primary" : "text-muted-foreground hover:text-foreground"
-                  )}
-                  aria-current={active ? "page" : undefined}
-                >
-                  <div className="relative">
-                    <Icon className="h-5 w-5" />
-                    {!!badgeCount && badgeCount > 0 && (
-                      <span className="absolute -top-1 -right-2 inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-primary text-primary-foreground text-[10px] px-1 leading-none">
-                        {badgeCount}
-                      </span>
-                    )}
-                  </div>
-                  <span className="mt-1">{item.name}</span>
-                </Link>
-              )
-            })}
-          </nav>
+      {/* Mobile Header */}
+      <div className="md:hidden">
+        <div className="flex items-center justify-between p-4 border-b bg-card">
+          <div className="flex items-center">
+            <Brain className="h-6 w-6 text-primary" />
+            <span className="ml-2 font-semibold">ADHD Companion</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" size="icon" aria-label="Notifications">
+              <Bell className="h-5 w-5" />
+            </Button>
+            <UserMenu />
+            <Sheet open={isOpen} onOpenChange={setIsOpen}>
+              <SheetTrigger asChild>
+                <Button variant="ghost" size="icon" aria-label="Menu">
+                  <Menu className="h-5 w-5" />
+                </Button>
+              </SheetTrigger>
+              <SheetContent side="left" className="w-64">
+                <div className="flex items-center mb-8">
+                  <Brain className="h-6 w-6 text-primary" />
+                  <span className="ml-2 font-semibold">ADHD Companion</span>
+                </div>
+                <NavItems mobile />
+              </SheetContent>
+            </Sheet>
+          </div>
         </div>
-      </BodyPortal>
+      </div>
+
+      {/* Mobile Bottom Bar (fixed) */}
+      <div className="fixed bottom-0 left-0 right-0 z-40 border-t bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/60 md:hidden">
+        <nav className="grid grid-cols-5">
+          {navigation.slice(0, 5).map((item) => {
+            const isActive = pathname === item.href
+            const badgeCount = badgeCounts[item.name]
+            return (
+              <Link
+                key={`bottom-${item.name}`}
+                href={item.href}
+                className={cn(
+                  "flex flex-col items-center justify-center py-2 text-xs",
+                  "transition-colors",
+                  isActive ? "text-primary" : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                <div className="relative">
+                  <item.icon className="h-5 w-5" />
+                  {badgeCount && badgeCount > 0 && (
+                    <span className="absolute -top-1 -right-2 inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-primary text-primary-foreground text-[10px] px-1 leading-none">
+                      {badgeCount}
+                    </span>
+                  )}
+                </div>
+                <span className="mt-1">{item.name}</span>
+              </Link>
+            )
+          })}
+        </nav>
+      </div>
     </>
   )
 }
