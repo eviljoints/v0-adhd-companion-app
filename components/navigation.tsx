@@ -1,9 +1,10 @@
 // components/navigation.tsx
 "use client"
 
-import { useEffect, useState } from "react"
+import React, { useEffect, useState } from "react"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
+import { createPortal } from "react-dom"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
@@ -37,10 +38,18 @@ const NAV_LINKS: NavLink[] = [
   { name: "Appointments", href: "/appointments", icon: MapPin },
   { name: "AI Coach", href: "/coach", icon: Brain },
   { name: "VIP Contacts", href: "/contacts", icon: Users },
-  { name: "screening", href: "/screening", icon: ClipboardList }, // replaced NotepadTextDashed
+  { name: "screening", href: "/screening", icon: ClipboardList }, // safe lucide icon
   { name: "Settings", href: "/settings", icon: Settings },
   { name: "calendar", href: "/calendar-sync", icon: Calendar },
 ]
+
+/** Renders children into document.body to avoid parent transforms/overflow/z-index issues. */
+function BodyPortal({ children }: { children: React.ReactNode }) {
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => { setMounted(true) }, [])
+  if (!mounted) return null
+  return createPortal(children, document.body)
+}
 
 export function Navigation() {
   const pathname = usePathname()
@@ -62,10 +71,8 @@ export function Navigation() {
       }
     })
 
-    // react to auth changes
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (_, session) => {
+    // auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_, session) => {
       const u = session?.user ?? null
       setUser(u)
       if (u) {
@@ -183,9 +190,6 @@ export function Navigation() {
     </DropdownMenu>
   )
 
-  // If logged out, render nothing (pages redirect to login)
-  if (!user) return null
-
   return (
     <>
       {/* Desktop Sidebar (md+) */}
@@ -218,41 +222,44 @@ export function Navigation() {
         </div>
       </div>
 
-      {/* Mobile Bottom Bar (<md) */}
-      <div
-        className="fixed bottom-0 left-0 right-0 z-50 border-t bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/60 md:hidden pb-[env(safe-area-inset-bottom)] pointer-events-auto"
-        role="navigation"
-        aria-label="Primary mobile"
-      >
-        <nav className="grid grid-cols-5">
-          {NAV_LINKS.slice(0, 5).map((item) => {
-            const active = isActive(item.href)
-            const badgeCount = badgeCounts[item.name]
-            const Icon = item.icon
-            return (
-              <Link
-                key={`bottom-${item.name}`}
-                href={item.href}
-                className={cn(
-                  "flex flex-col items-center justify-center py-2 text-xs transition-colors",
-                  active ? "text-primary" : "text-muted-foreground hover:text-foreground"
-                )}
-                aria-current={active ? "page" : undefined}
-              >
-                <div className="relative">
-                  <Icon className="h-5 w-5" />
-                  {!!badgeCount && badgeCount > 0 && (
-                    <span className="absolute -top-1 -right-2 inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-primary text-primary-foreground text-[10px] px-1 leading-none">
-                      {badgeCount}
-                    </span>
+      {/* Mobile Bottom Bar (<md) via Portal — always mounted */}
+      <BodyPortal>
+        <div
+          data-testid="mobile-bottom-bar"
+          className="fixed bottom-0 left-0 right-0 z-[100] border-t bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/60 md:hidden pb-[env(safe-area-inset-bottom)] pointer-events-auto"
+          role="navigation"
+          aria-label="Primary mobile"
+        >
+          <nav className="grid grid-cols-5">
+            {NAV_LINKS.slice(0, 5).map((item) => {
+              const active = isActive(item.href)
+              const badgeCount = badgeCounts[item.name]
+              const Icon = item.icon
+              return (
+                <Link
+                  key={`bottom-${item.name}`}
+                  href={item.href}
+                  className={cn(
+                    "flex flex-col items-center justify-center py-2 text-xs transition-colors",
+                    active ? "text-primary" : "text-muted-foreground hover:text-foreground"
                   )}
-                </div>
-                <span className="mt-1">{item.name}</span>
-              </Link>
-            )
-          })}
-        </nav>
-      </div>
+                  aria-current={active ? "page" : undefined}
+                >
+                  <div className="relative">
+                    <Icon className="h-5 w-5" />
+                    {!!badgeCount && badgeCount > 0 && (
+                      <span className="absolute -top-1 -right-2 inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-primary text-primary-foreground text-[10px] px-1 leading-none">
+                        {badgeCount}
+                      </span>
+                    )}
+                  </div>
+                  <span className="mt-1">{item.name}</span>
+                </Link>
+              )
+            })}
+          </nav>
+        </div>
+      </BodyPortal>
     </>
   )
 }
