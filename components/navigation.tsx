@@ -43,7 +43,6 @@ const NAV_LINKS: NavLink[] = [
   { name: "calendar", href: "/calendar-sync", icon: Calendar },
 ]
 
-// Render children into <body> (avoids transforms/overflow/z-index issues)
 function BodyPortal({ children }: { children: React.ReactNode }) {
   const [mounted, setMounted] = useState(false)
   useEffect(() => setMounted(true), [])
@@ -61,6 +60,7 @@ export function Navigation() {
   useEffect(() => {
     const supabase = createClient()
 
+    // initial session + profile
     supabase.auth.getUser().then(async ({ data: { user } }) => {
       setUser(user)
       if (user) {
@@ -70,6 +70,7 @@ export function Navigation() {
       }
     })
 
+    // auth changes
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (_, session) => {
@@ -95,11 +96,13 @@ export function Navigation() {
         supabase.from("appointments").select("*", { count: "exact" }).eq("user_id", userId).eq("completed", false),
         supabase.from("vip_contacts").select("*").eq("user_id", userId),
       ])
+
       const counts: Record<string, number> = {}
 
       if (appointmentsRes.status === "fulfilled" && appointmentsRes.value.count) {
         counts.Appointments = appointmentsRes.value.count
       }
+
       if (contactsRes.status === "fulfilled" && contactsRes.value.data) {
         const needing = contactsRes.value.data.filter((c: any) => {
           if (!c.last_contacted) return true
@@ -108,6 +111,7 @@ export function Navigation() {
         })
         if (needing.length > 0) counts["VIP Contacts"] = needing.length
       }
+
       setBadgeCounts(counts)
     } catch (e) {
       console.error("badgeCounts error", e)

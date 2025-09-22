@@ -5,7 +5,6 @@ import { GeistSans } from "geist/font/sans"
 import { GeistMono } from "geist/font/mono"
 import { Analytics } from "@vercel/analytics/next"
 import { Navigation } from "@/components/navigation"
-import { Suspense } from "react"
 import "./globals.css"
 
 export const metadata: Metadata = {
@@ -40,13 +39,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body className={`font-sans ${GeistSans.variable} ${GeistMono.variable}`}>
         <div className="min-h-screen bg-background">
-          <Suspense fallback={<div>Loading...</div>}>
-            <Navigation />
-            {/* Sidebar offset on md+, & bottom padding for mobile bottom bar */}
-            <main className="md:pl-64 pb-[calc(64px+env(safe-area-inset-bottom))]">
-              {children}
-            </main>
-          </Suspense>
+          {/* Keep layout simple; no Suspense around client components */}
+          <Navigation />
+          {/* Sidebar offset on md+, & bottom padding for mobile bottom bar */}
+          <main className="md:pl-64 pb-[calc(64px+env(safe-area-inset-bottom))]">
+            {children}
+          </main>
         </div>
         <Analytics />
       </body>

@@ -1,8 +1,7 @@
-//app\contacts\page.tsx
+// app/contacts/page.tsx
 "use client"
 
 import type React from "react"
-
 import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
@@ -68,22 +67,14 @@ export default function ContactsPage() {
 
   useEffect(() => {
     const supabase = createClient()
-
-    const getUser = async () => {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser()
-
-      if (!user) {
-        router.push("/auth/login")
-        return
-      }
-
+    const run = async () => {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) { router.push("/auth/login"); return }
       setUser(user)
       await loadContacts(user.id)
+      setIsLoading(false)
     }
-
-    getUser()
+    run()
   }, [router])
 
   const loadContacts = async (userId: string) => {
@@ -99,15 +90,12 @@ export default function ContactsPage() {
     } else {
       setContacts(data || [])
     }
-    setIsLoading(false)
   }
 
   const deleteContact = async (id: string) => {
     if (!user) return
-
     const supabase = createClient()
     const { error } = await supabase.from("vip_contacts").delete().eq("id", id).eq("user_id", user.id)
-
     if (error) {
       console.error("Error deleting contact:", error)
     } else {
@@ -117,36 +105,30 @@ export default function ContactsPage() {
 
   const importMobileContacts = async () => {
     if (!("contacts" in navigator) || !("ContactsManager" in window)) {
-      alert(
-        "Contact import is not supported on this device. This feature works best on mobile devices with contact access.",
-      )
+      alert("Contact import is not supported on this device.")
       return
     }
-
     try {
       setIsImporting(true)
       const props = ["name", "tel", "email"]
       const opts = { multiple: true }
-
-      // @ts-ignore - Contacts API is experimental
+      // @ts-ignore experimental
       const contacts = await navigator.contacts.select(props, opts)
-
-      const formattedContacts = contacts.map((contact: any) => ({
-        name: contact.name?.[0] || "Unknown",
-        phone: contact.tel?.[0] || "",
-        email: contact.email?.[0] || "",
+      const formatted = contacts.map((c: any) => ({
+        name: c.name?.[0] || "Unknown",
+        phone: c.tel?.[0] || "",
+        email: c.email?.[0] || "",
         relationship: "",
         priority: "medium" as const,
         contact_frequency_days: 7,
         notes: "",
         selected: false,
       }))
-
-      setImportedContacts(formattedContacts)
+      setImportedContacts(formatted)
       setIsImportDialogOpen(true)
-    } catch (error) {
-      console.error("Error importing contacts:", error)
-      alert("Unable to import contacts. Please make sure you grant permission when prompted.")
+    } catch (e) {
+      console.error("Error importing contacts:", e)
+      alert("Unable to import contacts. Please allow permission when prompted.")
     } finally {
       setIsImporting(false)
     }
@@ -154,113 +136,70 @@ export default function ContactsPage() {
 
   const saveImportedContacts = async () => {
     if (!user) return
-
-    const selectedContacts = importedContacts.filter((contact) => contact.selected)
-    if (selectedContacts.length === 0) return
-
+    const selected = importedContacts.filter((c) => c.selected)
+    if (selected.length === 0) return
     const supabase = createClient()
-
     try {
-      const contactsToInsert = selectedContacts.map((contact) => ({
+      const payload = selected.map((c: any) => ({
         user_id: user.id,
-        name: contact.name,
-        relationship: contact.relationship || "Friend",
-        phone: contact.phone || null,
-        email: contact.email || null,
-        priority: contact.priority,
-        contact_frequency_days: contact.contact_frequency_days,
-        notes: contact.notes,
+        name: c.name,
+        relationship: c.relationship || "Friend",
+        phone: c.phone || null,
+        email: c.email || null,
+        priority: c.priority,
+        contact_frequency_days: c.contact_frequency_days,
+        notes: c.notes,
         last_contacted: null,
       }))
-
-      const { error } = await supabase.from("vip_contacts").insert(contactsToInsert)
-
+      const { error } = await supabase.from("vip_contacts").insert(payload)
       if (error) throw error
-
       await loadContacts(user.id)
       setIsImportDialogOpen(false)
       setImportedContacts([])
-    } catch (error) {
-      console.error("Error saving imported contacts:", error)
+    } catch (e) {
+      console.error("Error saving imported contacts:", e)
       alert("Error saving contacts. Please try again.")
     }
   }
 
-  const getDaysSinceLastContact = (lastContact: string | null) => {
-    if (!lastContact) return 999 // Never contacted
-    const now = new Date()
-    const lastContactDate = new Date(lastContact)
-    const diffTime = Math.abs(now.getTime() - lastContactDate.getTime())
-    return Math.ceil(diffTime / (1000 * 60 * 60 * 24))
+  const getDaysSinceLastContact = (last: string | null) => {
+    if (!last) return 999
+    const diff = Math.abs(Date.now() - new Date(last).getTime())
+    return Math.ceil(diff / 86400000)
   }
 
-  const isOverdue = (contact: VIPContact) => {
-    return getDaysSinceLastContact(contact.last_contacted) > contact.contact_frequency_days
-  }
+  const isOverdue = (c: VIPContact) =>
+    getDaysSinceLastContact(c.last_contacted) > c.contact_frequency_days
 
-  const getUrgencyLevel = (contact: VIPContact) => {
-    const daysSince = getDaysSinceLastContact(contact.last_contacted)
-    const overdueDays = daysSince - contact.contact_frequency_days
-
-    if (overdueDays <= 0) return "current"
-    if (overdueDays <= 2) return "due"
-    if (overdueDays <= 5) return "overdue"
+  const getUrgencyLevel = (c: VIPContact) => {
+    const days = getDaysSinceLastContact(c.last_contacted)
+    const overdue = days - c.contact_frequency_days
+    if (overdue <= 0) return "current"
+    if (overdue <= 2) return "due"
+    if (overdue <= 5) return "overdue"
     return "urgent"
-  }
-
-  const getUrgencyColor = (urgency: string) => {
-    switch (urgency) {
-      case "current":
-        return "text-green-600 bg-green-50 border-green-200"
-      case "due":
-        return "text-yellow-600 bg-yellow-50 border-yellow-200"
-      case "overdue":
-        return "text-orange-600 bg-orange-50 border-orange-200"
-      case "urgent":
-        return "text-red-600 bg-red-50 border-red-200"
-      default:
-        return "text-gray-600 bg-gray-50 border-gray-200"
-    }
-  }
-
-  const getPriorityColor = (priority: string) => {
-    switch (priority) {
-      case "high":
-        return "text-red-600 bg-red-50 border-red-200"
-      case "medium":
-        return "text-orange-600 bg-orange-50 border-orange-200"
-      case "low":
-        return "text-green-600 bg-green-50 border-green-200"
-      default:
-        return "text-gray-600 bg-gray-50 border-gray-200"
-    }
   }
 
   const markAsContacted = async (id: string) => {
     if (!user) return
-
     const supabase = createClient()
     const { error } = await supabase
       .from("vip_contacts")
-      .update({
-        last_contacted: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
+      .update({ last_contacted: new Date().toISOString(), updated_at: new Date().toISOString() })
       .eq("id", id)
       .eq("user_id", user.id)
-
     if (error) {
       console.error("Error updating contact:", error)
     } else {
       setContacts((prev) =>
-        prev.map((contact) => (contact.id === id ? { ...contact, last_contacted: new Date().toISOString() } : contact)),
+        prev.map((c) => (c.id === id ? { ...c, last_contacted: new Date().toISOString() } : c)),
       )
     }
   }
 
   if (isLoading) {
     return (
-      <div className="md:pl-64">
+      <div className="w-full">
         <div className="p-6">
           <div className="animate-pulse space-y-6">
             <div className="h-8 bg-muted rounded w-1/4"></div>
@@ -271,19 +210,15 @@ export default function ContactsPage() {
     )
   }
 
-  const overdueContacts = contacts.filter(isOverdue).sort((a, b) => {
-    const urgencyA = getUrgencyLevel(a)
-    const urgencyB = getUrgencyLevel(b)
-    const urgencyOrder = { urgent: 4, overdue: 3, due: 2, current: 1 }
-    return urgencyOrder[urgencyB as keyof typeof urgencyOrder] - urgencyOrder[urgencyA as keyof typeof urgencyOrder]
-  })
-
-  const upcomingContacts = contacts
-    .filter((contact) => !isOverdue(contact))
-    .sort((a, b) => getDaysSinceLastContact(b.last_contacted) - getDaysSinceLastContact(a.last_contacted))
+  const overdueContacts = contacts
+    .filter(isOverdue)
+    .sort((a, b) => {
+      const order = { urgent: 4, overdue: 3, due: 2, current: 1 }
+      return order[getUrgencyLevel(b) as keyof typeof order] - order[getUrgencyLevel(a) as keyof typeof order]
+    })
 
   return (
-    <div className="md:pl-64">
+    <div className="w-full">
       <div className="p-6 space-y-6">
         {/* Header */}
         <div className="flex items-center justify-between">
@@ -292,7 +227,6 @@ export default function ContactsPage() {
             <p className="text-muted-foreground mt-1">Stay connected with the people who matter most</p>
           </div>
           <div className="flex gap-2">
-            {/* Import Contacts Button */}
             <Button variant="outline" onClick={importMobileContacts} disabled={isImporting}>
               <Import className="h-4 w-4 mr-2" />
               {isImporting ? "Importing..." : "Import Contacts"}
@@ -554,50 +488,37 @@ function ContactCard({
   onEdit: (contact: VIPContact) => void
   onDelete: (id: string) => void
 }) {
-  const getDaysSinceLastContact = (lastContact: string | null) => {
-    if (!lastContact) return 999 // Never contacted
-    const now = new Date()
-    const lastContactDate = new Date(lastContact)
-    const diffTime = Math.abs(now.getTime() - lastContactDate.getTime())
-    return Math.ceil(diffTime / (1000 * 60 * 60 * 24))
+  const getDaysSinceLastContact = (last: string | null) => {
+    if (!last) return 999
+    const diff = Math.abs(Date.now() - new Date(last).getTime())
+    return Math.ceil(diff / 86400000)
   }
 
   const getUrgencyColor = (urgency: string) => {
     switch (urgency) {
-      case "current":
-        return "text-green-600 bg-green-50 border-green-200"
-      case "due":
-        return "text-yellow-600 bg-yellow-50 border-yellow-200"
-      case "overdue":
-        return "text-orange-600 bg-orange-50 border-orange-200"
-      case "urgent":
-        return "text-red-600 bg-red-50 border-red-200"
-      default:
-        return "text-gray-600 bg-gray-50 border-gray-200"
+      case "current": return "text-green-600 bg-green-50 border-green-200"
+      case "due": return "text-yellow-600 bg-yellow-50 border-yellow-200"
+      case "overdue": return "text-orange-600 bg-orange-50 border-orange-200"
+      case "urgent": return "text-red-600 bg-red-50 border-red-200"
+      default: return "text-gray-600 bg-gray-50 border-gray-200"
     }
   }
 
   const getPriorityColor = (priority: string) => {
     switch (priority) {
-      case "high":
-        return "text-red-600 bg-red-50 border-red-200"
-      case "medium":
-        return "text-orange-600 bg-orange-50 border-orange-200"
-      case "low":
-        return "text-green-600 bg-green-50 border-green-200"
-      default:
-        return "text-gray-600 bg-gray-50 border-gray-200"
+      case "high": return "text-red-600 bg-red-50 border-red-200"
+      case "medium": return "text-orange-600 bg-orange-50 border-orange-200"
+      case "low": return "text-green-600 bg-green-50 border-green-200"
+      default: return "text-gray-600 bg-gray-50 border-gray-200"
     }
   }
 
   const daysSince = getDaysSinceLastContact(contact.last_contacted)
-  const getInitials = (name: string) => {
-    return name
-      .split(" ")
-      .map((n) => n[0])
-      .join("")
-      .toUpperCase()
-  }
+  const initials = contact.name
+    .split(" ")
+    .map((n) => n[0])
+    .join("")
+    .toUpperCase()
 
   return (
     <Card className={cn("transition-all duration-200", isOverdue && "ring-2 ring-red-500 bg-red-50 dark:bg-red-950")}>
@@ -605,7 +526,7 @@ function ContactCard({
         <div className="flex items-start gap-4">
           <Avatar className="h-12 w-12">
             <AvatarImage src="/placeholder.svg" alt={contact.name} />
-            <AvatarFallback className="bg-blue-100 text-blue-600">{getInitials(contact.name)}</AvatarFallback>
+            <AvatarFallback className="bg-blue-100 text-blue-600">{initials}</AvatarFallback>
           </Avatar>
 
           <div className="flex-1 min-w-0">
@@ -620,13 +541,7 @@ function ContactCard({
                     Last contact: {daysSince === 999 ? "Never" : `${daysSince} day${daysSince !== 1 ? "s" : ""} ago`}
                   </span>
                   <Badge className={getUrgencyColor(urgency)}>
-                    {urgency === "current"
-                      ? "Up to date"
-                      : urgency === "due"
-                        ? "Due soon"
-                        : urgency === "overdue"
-                          ? "Overdue"
-                          : "Urgent"}
+                    {urgency === "current" ? "Up to date" : urgency === "due" ? "Due soon" : urgency === "overdue" ? "Overdue" : "Urgent"}
                   </Badge>
                 </div>
 
@@ -661,7 +576,6 @@ function ContactCard({
             </div>
 
             <div className="flex items-center gap-2 mt-4">
-              {/* Contact Methods */}
               {contact.phone && (
                 <>
                   <Button variant="outline" size="sm" asChild>
@@ -686,7 +600,6 @@ function ContactCard({
                   </a>
                 </Button>
               )}
-
               <Button variant="default" size="sm" onClick={() => onMarkContacted(contact.id)} className="ml-auto">
                 <CheckCircle2 className="h-3 w-3 mr-1" />
                 Mark as Contacted
@@ -724,13 +637,11 @@ function ContactForm({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!user) return
-
     setIsSubmitting(true)
 
     try {
       const supabase = createClient()
-
-      const contactData = {
+      const data = {
         name: formData.name,
         relationship: formData.relationship,
         phone: formData.phone || null,
@@ -742,24 +653,10 @@ function ContactForm({
       }
 
       if (contact) {
-        // Update existing contact
-        const { error } = await supabase
-          .from("vip_contacts")
-          .update(contactData)
-          .eq("id", contact.id)
-          .eq("user_id", user.id)
-
+        const { error } = await supabase.from("vip_contacts").update(data).eq("id", contact.id).eq("user_id", user.id)
         if (error) throw error
       } else {
-        // Create new contact
-        const { error } = await supabase.from("vip_contacts").insert([
-          {
-            user_id: user.id,
-            last_contacted: null,
-            ...contactData,
-          },
-        ])
-
+        const { error } = await supabase.from("vip_contacts").insert([{ user_id: user.id, last_contacted: null, ...data }])
         if (error) throw error
       }
 
@@ -776,59 +673,30 @@ function ContactForm({
     <form onSubmit={handleSubmit} className="space-y-4">
       <div>
         <Label htmlFor="name">Name</Label>
-        <Input
-          id="name"
-          value={formData.name}
-          onChange={(e) => setFormData((prev) => ({ ...prev, name: e.target.value }))}
-          placeholder="e.g., Mom, Sarah, Dr. Smith"
-          required
-        />
+        <Input id="name" value={formData.name} onChange={(e) => setFormData((p) => ({ ...p, name: e.target.value }))} required />
       </div>
 
       <div>
         <Label htmlFor="relationship">Relationship</Label>
-        <Input
-          id="relationship"
-          value={formData.relationship}
-          onChange={(e) => setFormData((prev) => ({ ...prev, relationship: e.target.value }))}
-          placeholder="e.g., Parent, Friend, Therapist"
-          required
-        />
+        <Input id="relationship" value={formData.relationship} onChange={(e) => setFormData((p) => ({ ...p, relationship: e.target.value }))} required />
       </div>
 
       <div className="grid grid-cols-2 gap-4">
         <div>
           <Label htmlFor="phone">Phone</Label>
-          <Input
-            id="phone"
-            type="tel"
-            value={formData.phone}
-            onChange={(e) => setFormData((prev) => ({ ...prev, phone: e.target.value }))}
-            placeholder="+1 (555) 123-4567"
-          />
+          <Input id="phone" type="tel" value={formData.phone} onChange={(e) => setFormData((p) => ({ ...p, phone: e.target.value }))} />
         </div>
         <div>
           <Label htmlFor="email">Email</Label>
-          <Input
-            id="email"
-            type="email"
-            value={formData.email}
-            onChange={(e) => setFormData((prev) => ({ ...prev, email: e.target.value }))}
-            placeholder="email@example.com"
-          />
+          <Input id="email" type="email" value={formData.email} onChange={(e) => setFormData((p) => ({ ...p, email: e.target.value }))} />
         </div>
       </div>
 
       <div className="grid grid-cols-2 gap-4">
         <div>
           <Label htmlFor="priority">Priority</Label>
-          <Select
-            value={formData.priority}
-            onValueChange={(value: "low" | "medium" | "high") => setFormData((prev) => ({ ...prev, priority: value }))}
-          >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
+          <Select value={formData.priority} onValueChange={(v: "low" | "medium" | "high") => setFormData((p) => ({ ...p, priority: v }))}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="low">Low</SelectItem>
               <SelectItem value="medium">Medium</SelectItem>
@@ -836,16 +704,10 @@ function ContactForm({
             </SelectContent>
           </Select>
         </div>
-
         <div>
           <Label htmlFor="frequency">Reminder Frequency</Label>
-          <Select
-            value={formData.contact_frequency_days}
-            onValueChange={(value) => setFormData((prev) => ({ ...prev, contact_frequency_days: value }))}
-          >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
+          <Select value={formData.contact_frequency_days} onValueChange={(v) => setFormData((p) => ({ ...p, contact_frequency_days: v }))}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="1">Daily</SelectItem>
               <SelectItem value="3">Every 3 days</SelectItem>
@@ -859,19 +721,11 @@ function ContactForm({
 
       <div>
         <Label htmlFor="notes">Notes</Label>
-        <Textarea
-          id="notes"
-          value={formData.notes}
-          onChange={(e) => setFormData((prev) => ({ ...prev, notes: e.target.value }))}
-          placeholder="Any special notes about this person..."
-          rows={2}
-        />
+        <Textarea id="notes" rows={2} value={formData.notes} onChange={(e) => setFormData((p) => ({ ...p, notes: e.target.value }))} />
       </div>
 
       <div className="flex gap-2 pt-4">
-        <Button type="button" variant="outline" onClick={onClose} className="flex-1 bg-transparent">
-          Cancel
-        </Button>
+        <Button type="button" variant="outline" onClick={onClose} className="flex-1 bg-transparent">Cancel</Button>
         <Button type="submit" className="flex-1" disabled={isSubmitting}>
           {isSubmitting ? (contact ? "Updating..." : "Adding...") : contact ? "Update Contact" : "Add Contact"}
         </Button>
