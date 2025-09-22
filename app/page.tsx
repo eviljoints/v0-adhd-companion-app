@@ -43,8 +43,8 @@ export default async function HomePage() {
       .slice(0, 2) || []
 
   return (
-    <div className="md:pl-64 w-full overflow-x-hidden pb-[calc(64px+env(safe-area-inset-bottom))]">
-      <div className="p-6">
+    <div className="w-full overflow-x-hidden">
+  <div className="p-6">
         <DashboardClient
           user={user}
           profile={profile}
