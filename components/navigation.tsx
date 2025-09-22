@@ -1,25 +1,36 @@
 // components/navigation.tsx
 "use client"
 
-import { useState, useEffect } from "react"
+import { useEffect, useState } from "react"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
-import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet"
 import { Badge } from "@/components/ui/badge"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
-  DropdownMenuSeparator, DropdownMenuTrigger,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import {
-  Home, MapPin, Brain, Users, Settings, LogOut, User, NotepadTextDashed, Calendar,
+  Home,
+  MapPin,
+  Brain,
+  Users,
+  Settings,
+  LogOut,
+  User,
+  NotepadTextDashed,
+  Calendar,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { createClient } from "@/lib/supabase/client"
 import type { User as SupabaseUser } from "@supabase/supabase-js"
 
-const navigation = [
+const NAV_LINKS = [
   { name: "Home", href: "/", icon: Home },
   { name: "Appointments", href: "/appointments", icon: MapPin },
   { name: "AI Coach", href: "/coach", icon: Brain },
@@ -39,19 +50,24 @@ export function Navigation() {
   useEffect(() => {
     const supabase = createClient()
 
-    supabase.auth.getUser().then(({ data: { user } }) => {
+    // initial session + profile
+    supabase.auth.getUser().then(async ({ data: { user } }) => {
       setUser(user)
       if (user) {
-        supabase.from("profiles").select("*").eq("id", user.id).single().then(({ data }) => setProfile(data))
-        fetchBadgeCounts(user.id)
+        const { data: prof } = await supabase.from("profiles").select("*").eq("id", user.id).single()
+        setProfile(prof || null)
+        void fetchBadgeCounts(user.id)
       }
     })
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_, session) => {
-      setUser(session?.user ?? null)
-      if (session?.user) {
-        supabase.from("profiles").select("*").eq("id", session.user.id).single().then(({ data }) => setProfile(data))
-        fetchBadgeCounts(session.user.id)
+    // react to future auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_, session) => {
+      const u = session?.user ?? null
+      setUser(u)
+      if (u) {
+        const { data: prof } = await supabase.from("profiles").select("*").eq("id", u.id).single()
+        setProfile(prof || null)
+        void fetchBadgeCounts(u.id)
       } else {
         setProfile(null)
         setBadgeCounts({})
@@ -64,31 +80,29 @@ export function Navigation() {
   const fetchBadgeCounts = async (userId: string) => {
     const supabase = createClient()
     try {
-      const [appointmentsResult, contactsResult] = await Promise.allSettled([
+      const [appointmentsRes, contactsRes] = await Promise.allSettled([
         supabase.from("appointments").select("*", { count: "exact" }).eq("user_id", userId).eq("completed", false),
         supabase.from("vip_contacts").select("*").eq("user_id", userId),
       ])
 
-      const next: Record<string, number> = {}
+      const counts: Record<string, number> = {}
 
-      if (appointmentsResult.status === "fulfilled" && appointmentsResult.value.count) {
-        next.Appointments = appointmentsResult.value.count
+      if (appointmentsRes.status === "fulfilled" && appointmentsRes.value.count) {
+        counts.Appointments = appointmentsRes.value.count
       }
 
-      if (contactsResult.status === "fulfilled" && contactsResult.value.data) {
-        const contactsNeedingAttention = contactsResult.value.data.filter((c: any) => {
+      if (contactsRes.status === "fulfilled" && contactsRes.value.data) {
+        const needing = contactsRes.value.data.filter((c: any) => {
           if (!c.last_contacted) return true
           const days = Math.floor((Date.now() - new Date(c.last_contacted).getTime()) / 86400000)
           return days >= (c.contact_frequency_days || 7)
         })
-        if (contactsNeedingAttention.length > 0) {
-          next["VIP Contacts"] = contactsNeedingAttention.length
-        }
+        if (needing.length > 0) counts["VIP Contacts"] = needing.length
       }
 
-      setBadgeCounts(next)
+      setBadgeCounts(counts)
     } catch (e) {
-      console.error("badge counts", e)
+      console.error("badgeCounts error", e)
     }
   }
 
@@ -98,10 +112,13 @@ export function Navigation() {
     router.push("/auth/login")
   }
 
+  const isActive = (href: string) =>
+    pathname === href || (href !== "/" && pathname?.startsWith(href))
+
   const NavItems = () => (
     <nav className="space-y-2">
-      {navigation.map((item) => {
-        const isActive = pathname === item.href || (item.href !== "/" && pathname?.startsWith(item.href))
+      {NAV_LINKS.map((item) => {
+        const active = isActive(item.href)
         const badgeCount = badgeCounts[item.name]
         return (
           <Link
@@ -109,7 +126,9 @@ export function Navigation() {
             href={item.href}
             className={cn(
               "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
-              isActive ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground hover:bg-muted",
+              active
+                ? "bg-primary text-primary-foreground"
+                : "text-muted-foreground hover:text-foreground hover:bg-muted"
             )}
           >
             <item.icon className="h-4 w-4" />
@@ -130,7 +149,9 @@ export function Navigation() {
           <Avatar className="h-8 w-8">
             <AvatarImage src={profile?.avatar_url || "/placeholder.svg"} alt={profile?.full_name || user?.email} />
             <AvatarFallback>
-              {profile?.full_name ? profile.full_name.charAt(0).toUpperCase() : user?.email?.charAt(0).toUpperCase()}
+              {profile?.full_name
+                ? profile.full_name.charAt(0).toUpperCase()
+                : user?.email?.charAt(0).toUpperCase()}
             </AvatarFallback>
           </Avatar>
         </Button>
@@ -157,12 +178,12 @@ export function Navigation() {
     </DropdownMenu>
   )
 
-  // If logged out, render nothing (or a tiny top strip if you want). Pages will redirect anyway.
+  // When logged out, render nothing (pages will redirect).
   if (!user) return null
 
   return (
     <>
-      {/* Desktop Sidebar (fixed) */}
+      {/* Desktop Sidebar (fixed, md+) */}
       <div className="hidden md:flex md:w-64 md:flex-col md:fixed md:inset-y-0 md:left-0 z-40">
         <div className="flex flex-col flex-grow pt-5 bg-card border-r overflow-y-auto">
           <div className="flex items-center flex-shrink-0 px-4">
@@ -177,7 +198,9 @@ export function Navigation() {
               <Avatar className="h-8 w-8">
                 <AvatarImage src={profile?.avatar_url || "/placeholder.svg"} alt={profile?.full_name || user?.email} />
                 <AvatarFallback>
-                  {profile?.full_name ? profile.full_name.charAt(0).toUpperCase() : user?.email?.charAt(0).toUpperCase()}
+                  {profile?.full_name
+                    ? profile.full_name.charAt(0).toUpperCase()
+                    : user?.email?.charAt(0).toUpperCase()}
                 </AvatarFallback>
               </Avatar>
               <div className="flex-1 min-w-0">
@@ -190,11 +213,15 @@ export function Navigation() {
         </div>
       </div>
 
-      {/* Mobile Bottom Bar (only on mobile) */}
-      <div className="fixed bottom-0 left-0 right-0 z-50 border-t bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/60 md:hidden pointer-events-auto pb-[env(safe-area-inset-bottom)]">
+      {/* Mobile Bottom Bar (fixed, <md) */}
+      <div
+        className="fixed bottom-0 left-0 right-0 z-50 border-t bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/60 md:hidden pb-[env(safe-area-inset-bottom)] pointer-events-auto"
+        role="navigation"
+        aria-label="Primary mobile"
+      >
         <nav className="grid grid-cols-5">
-          {navigation.slice(0, 5).map((item) => {
-            const isActive = pathname === item.href || (item.href !== "/" && pathname?.startsWith(item.href))
+          {NAV_LINKS.slice(0, 5).map((item) => {
+            const active = isActive(item.href)
             const badgeCount = badgeCounts[item.name]
             return (
               <Link
@@ -202,23 +229,11 @@ export function Navigation() {
                 href={item.href}
                 className={cn(
                   "flex flex-col items-center justify-center py-2 text-xs transition-colors",
-                  isActive ? "text-primary" : "text-muted-foreground hover:text-foreground"
+                  active ? "text-primary" : "text-muted-foreground hover:text-foreground"
                 )}
+                aria-current={active ? "page" : undefined}
               >
                 <div className="relative">
                   <item.icon className="h-5 w-5" />
                   {!!badgeCount && badgeCount > 0 && (
-                    <span className="absolute -top-1 -right-2 inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-primary text-primary-foreground text-[10px] px-1 leading-none">
-                      {badgeCount}
-                    </span>
-                  )}
-                </div>
-                <span className="mt-1">{item.name}</span>
-              </Link>
-            )
-          })}
-        </nav>
-      </div>
-    </>
-  )
-}
+                    <span cl
