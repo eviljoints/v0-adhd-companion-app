@@ -23,19 +23,21 @@ import {
   Settings,
   LogOut,
   User,
-  NotepadTextDashed,
+  ClipboardList,
   Calendar,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { createClient } from "@/lib/supabase/client"
 import type { User as SupabaseUser } from "@supabase/supabase-js"
 
-const NAV_LINKS = [
+type NavLink = { name: string; href: string; icon: React.ComponentType<{ className?: string }> }
+
+const NAV_LINKS: NavLink[] = [
   { name: "Home", href: "/", icon: Home },
   { name: "Appointments", href: "/appointments", icon: MapPin },
   { name: "AI Coach", href: "/coach", icon: Brain },
   { name: "VIP Contacts", href: "/contacts", icon: Users },
-  { name: "screening", href: "/screening", icon: NotepadTextDashed },
+  { name: "screening", href: "/screening", icon: ClipboardList }, // replaced NotepadTextDashed
   { name: "Settings", href: "/settings", icon: Settings },
   { name: "calendar", href: "/calendar-sync", icon: Calendar },
 ]
@@ -60,8 +62,10 @@ export function Navigation() {
       }
     })
 
-    // react to future auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_, session) => {
+    // react to auth changes
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(async (_, session) => {
       const u = session?.user ?? null
       setUser(u)
       if (u) {
@@ -120,6 +124,7 @@ export function Navigation() {
       {NAV_LINKS.map((item) => {
         const active = isActive(item.href)
         const badgeCount = badgeCounts[item.name]
+        const Icon = item.icon
         return (
           <Link
             key={item.name}
@@ -131,7 +136,7 @@ export function Navigation() {
                 : "text-muted-foreground hover:text-foreground hover:bg-muted"
             )}
           >
-            <item.icon className="h-4 w-4" />
+            <Icon className="h-4 w-4" />
             {item.name}
             {!!badgeCount && badgeCount > 0 && (
               <Badge variant="secondary" className="ml-auto">{badgeCount}</Badge>
@@ -178,12 +183,12 @@ export function Navigation() {
     </DropdownMenu>
   )
 
-  // When logged out, render nothing (pages will redirect).
+  // If logged out, render nothing (pages redirect to login)
   if (!user) return null
 
   return (
     <>
-      {/* Desktop Sidebar (fixed, md+) */}
+      {/* Desktop Sidebar (md+) */}
       <div className="hidden md:flex md:w-64 md:flex-col md:fixed md:inset-y-0 md:left-0 z-40">
         <div className="flex flex-col flex-grow pt-5 bg-card border-r overflow-y-auto">
           <div className="flex items-center flex-shrink-0 px-4">
@@ -213,7 +218,7 @@ export function Navigation() {
         </div>
       </div>
 
-      {/* Mobile Bottom Bar (fixed, <md) */}
+      {/* Mobile Bottom Bar (<md) */}
       <div
         className="fixed bottom-0 left-0 right-0 z-50 border-t bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/60 md:hidden pb-[env(safe-area-inset-bottom)] pointer-events-auto"
         role="navigation"
@@ -223,6 +228,7 @@ export function Navigation() {
           {NAV_LINKS.slice(0, 5).map((item) => {
             const active = isActive(item.href)
             const badgeCount = badgeCounts[item.name]
+            const Icon = item.icon
             return (
               <Link
                 key={`bottom-${item.name}`}
@@ -234,6 +240,19 @@ export function Navigation() {
                 aria-current={active ? "page" : undefined}
               >
                 <div className="relative">
-                  <item.icon className="h-5 w-5" />
+                  <Icon className="h-5 w-5" />
                   {!!badgeCount && badgeCount > 0 && (
-                    <span cl
+                    <span className="absolute -top-1 -right-2 inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-primary text-primary-foreground text-[10px] px-1 leading-none">
+                      {badgeCount}
+                    </span>
+                  )}
+                </div>
+                <span className="mt-1">{item.name}</span>
+              </Link>
+            )
+          })}
+        </nav>
+      </div>
+    </>
+  )
+}
