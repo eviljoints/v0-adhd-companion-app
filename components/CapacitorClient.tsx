@@ -1,4 +1,5 @@
 "use client";
+
 import { useEffect, useRef } from "react";
 import { Capacitor } from "@capacitor/core";
 import { App } from "@capacitor/app";
@@ -7,21 +8,19 @@ import { PushNotifications } from "@capacitor/push-notifications";
 import { LocalNotifications } from "@capacitor/local-notifications";
 import { registerPlugin } from "@capacitor/core";
 import type { BackgroundGeolocationPlugin } from "@capacitor-community/background-geolocation";
+import { AlarmPlugin } from "@/plugins/alarm-plugin";
 
-// Community plugin registration (Capacitor v7)
 const BackgroundGeolocation = registerPlugin<BackgroundGeolocationPlugin>("BackgroundGeolocation");
 
-/** Geofence shape written by your Appointments page into localStorage */
 type SavedFence = {
   id: string;
   title: string;
   lat: number;
-  lon: number;     // note: lon (not lng)
-  radius: number;  // meters
+  lon: number;
+  radius: number; // meters
   location_name?: string | null;
 };
 
-// Correct haversine distance in meters
 function metersBetween(lat1: number, lon1: number, lat2: number, lon2: number) {
   const R = 6371e3;
   const φ1 = (lat1 * Math.PI) / 180;
@@ -35,24 +34,44 @@ function metersBetween(lat1: number, lon1: number, lat2: number, lon2: number) {
   return R * c;
 }
 
+async function ringNative({ title, body, loud }: { title: string; body: string; loud: boolean }) {
+  try {
+    if (loud) {
+      // Full-screen Activity (plays alert.mp3 + vibrates)
+      await AlarmPlugin.showFullScreenAlarm({ title, body });
+    } else {
+      // High-importance channel with sound; shows as heads-up and rings
+      await LocalNotifications.schedule({
+        notifications: [
+          {
+            id: Math.floor(Date.now() % 2147483647),
+            title,
+            body,
+            channelId: "alarms",
+            sound: "alert", // android/res/raw/alert.mp3
+            smallIcon: "ic_launcher",
+          },
+        ],
+      });
+    }
+  } catch (e) {
+    console.warn("Native ring failed", e);
+  }
+}
+
 export default function CapacitorClient() {
-  // Throttle fence alerts per id (10 minutes)
-  const lastNotifiedRef = useRef<Record<string, number>>({});
-  // Store watcher id to remove on unmount
-  const watcherIdRef = useRef<string | null>(null);
-  // Simple callback throttle (don’t run more than every 8s)
-  const lastCallbackRef = useRef<number>(0);
+  const lastNotifiedRef = useRef<Record<string, number>>({}); // per-fence throttle
 
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
 
-    // Close in-app browser if your OAuth redirects back into the app
+    // Close in-app browser on deep-links (safe no-op for https OAuth)
     App.addListener("appUrlOpen", async () => {
       try { await Browser.close(); } catch {}
     });
 
+    // Permissions + channel
     (async () => {
-      // ---- Push + Local notifications permissions & channel ----
       try {
         let perm = await PushNotifications.checkPermissions();
         if (perm.receive !== "granted") perm = await PushNotifications.requestPermissions();
@@ -61,95 +80,74 @@ export default function CapacitorClient() {
 
       try {
         await LocalNotifications.requestPermissions();
+
+        // Ensure channel exists (high importance + sound)
         await LocalNotifications.createChannel({
           id: "alarms",
           name: "Alarms",
           description: "Time & location reminders",
-          importance: 5,      // IMPORTANCE_HIGH
-          vibration: true,
+          importance: 5, // IMPORTANCE_HIGH
           lights: true,
-          // Put a file at android/app/src/main/res/raw/alert.mp3 then uncomment:
-          // sound: "alert",
+          vibration: true,
+          sound: "alert", // raw/alert.mp3
         });
       } catch (e) {
         console.warn("LocalNotifications setup failed", e);
       }
     })();
 
+    // Background geolocation watcher
     (async () => {
       try {
-        // NOTE: WatcherOptions for the community plugin do NOT include `minTime`.
-        // Use distanceFilter to limit updates; throttle in-code if you want more control.
-        const id = await BackgroundGeolocation.addWatcher(
+        await BackgroundGeolocation.addWatcher(
           {
+            backgroundMessage: "Location updates are active.",
+            backgroundTitle: "ADHD Companion",
             requestPermissions: true,
             stale: false,
-            backgroundTitle: "ADHD Companion",
-            backgroundMessage: "Location updates are active.",
-            distanceFilter: 25, // meters before another callback
+            distanceFilter: 25, // meters before callback again
           },
           async (location, error) => {
             if (error || !location) return;
 
-            // Simple callback throttle (every ~8s)
-            const nowMs = Date.now();
-            if (nowMs - lastCallbackRef.current < 8000) return;
-            lastCallbackRef.current = nowMs;
+            const { latitude, longitude, accuracy } = location;
+            const acc = Number.isFinite(accuracy as any) ? Number(accuracy) : 0;
 
-            const { latitude, longitude } = location;
-            const acc = typeof (location as any).accuracy === "number" ? (location as any).accuracy as number : 0;
-
-            // Load geofences
             let fences: SavedFence[] = [];
             try {
               const raw = localStorage.getItem("adhd.geofences");
               if (raw) fences = JSON.parse(raw);
             } catch {}
+
             if (!Array.isArray(fences) || fences.length === 0) return;
+
+            const loud = JSON.parse(localStorage.getItem("adhd.alarm.loud") || "true");
+            const now = Date.now();
 
             for (const f of fences) {
               const d = metersBetween(latitude, longitude, f.lat, f.lon);
-              // Use an accuracy cushion to avoid “off by ~100m”
-              const inside = d <= (f.radius + Math.max(acc, 50));
+              const inside = d <= (f.radius + Math.max(acc, 50)); // accuracy bubble
               if (!inside) continue;
 
-              // Per-fence throttle (10 minutes)
               const last = lastNotifiedRef.current[f.id] || 0;
-              if (nowMs - last < 10 * 60 * 1000) continue;
-              lastNotifiedRef.current[f.id] = nowMs;
+              if (now - last < 10 * 60 * 1000) continue; // throttle 10 min
 
-              try {
-                await LocalNotifications.schedule({
-                  notifications: [
-                    {
-                      id: Math.floor(nowMs % 2147483647),
-                      title: f.title || "Nearby Reminder",
-                      body: f.location_name || "You're near a saved place",
-                      channelId: "alarms",
-                      // extra: { type: "nearby", fenceId: f.id },
-                      // smallIcon: "ic_notification", // optional; defaults to app icon
-                    },
-                  ],
-                });
-              } catch (e) {
-                console.warn("LocalNotifications.schedule failed:", e);
-              }
+              lastNotifiedRef.current[f.id] = now;
+              await ringNative({
+                title: f.title || "Nearby Reminder",
+                body: f.location_name || "You're near a saved place",
+                loud,
+              });
             }
           }
         );
-        watcherIdRef.current = id;
       } catch (e) {
-        console.warn("BackgroundGeolocation.addWatcher failed", e);
+        console.warn("BG location setup failed", e);
       }
     })();
 
     return () => {
-      // Clean up watcher on unmount
-      const id = watcherIdRef.current;
-      if (id) {
-        BackgroundGeolocation.removeWatcher({ id }).catch(() => {});
-        watcherIdRef.current = null;
-      }
+      // If you store the watcherId from addWatcher, clear it here.
     };
   }, []);
 
