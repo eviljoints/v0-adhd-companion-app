@@ -190,7 +190,6 @@ export function Navigation() {
     </DropdownMenu>
   )
 
-  // When logged out, show a simple mobile header
   if (!user) {
     return (
       <div className="md:hidden">
@@ -267,37 +266,6 @@ export function Navigation() {
             </Sheet>
           </div>
         </div>
-      </div>
-
-      {/* Mobile Bottom Bar (fixed) */}
-      <div className="fixed bottom-0 left-0 right-0 z-40 border-t bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/60 md:hidden">
-        <nav className="grid grid-cols-5">
-          {navigation.slice(0, 5).map((item) => {
-            const isActive = pathname === item.href
-            const badgeCount = badgeCounts[item.name]
-            return (
-              <Link
-                key={`bottom-${item.name}`}
-                href={item.href}
-                className={cn(
-                  "flex flex-col items-center justify-center py-2 text-xs",
-                  "transition-colors",
-                  isActive ? "text-primary" : "text-muted-foreground hover:text-foreground"
-                )}
-              >
-                <div className="relative">
-                  <item.icon className="h-5 w-5" />
-                  {badgeCount && badgeCount > 0 && (
-                    <span className="absolute -top-1 -right-2 inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-primary text-primary-foreground text-[10px] px-1 leading-none">
-                      {badgeCount}
-                    </span>
-                  )}
-                </div>
-                <span className="mt-1">{item.name}</span>
-              </Link>
-            )
-          })}
-        </nav>
       </div>
     </>
   )
