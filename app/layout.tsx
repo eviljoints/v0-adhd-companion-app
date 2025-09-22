@@ -1,11 +1,14 @@
-// app/layout.tsx
+// app\layout.tsx
 import type React from "react"
-import type { Metadata, Viewport } from "next"
+import { Metadata, viewport } from "next"
 import { GeistSans } from "geist/font/sans"
 import { GeistMono } from "geist/font/mono"
 import { Analytics } from "@vercel/analytics/next"
 import { Navigation } from "@/components/navigation"
+import { Suspense } from "react"
 import "./globals.css"
+
+
 
 export const metadata: Metadata = {
   title: "ADHD Companion - Stay Organized & Motivated",
@@ -13,18 +16,25 @@ export const metadata: Metadata = {
   generator: "v0.app",
   manifest: "/manifest.json",
   themeColor: "#3b82f6",
-  appleWebApp: { capable: true, statusBarStyle: "default", title: "ADHD Companion" },
+  viewport: { viewport,
+    width: "device-width",
+    initialScale: 1,
+    maximumScale: 1,
+    userScalable: false,
+    viewportFit: "cover",
+  },
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: "ADHD Companion",
+  },
 }
 
-export const viewport: Viewport = {
-  width: "device-width",
-  initialScale: 1,
-  maximumScale: 1,
-  userScalable: false,
-  viewportFit: "cover",
-}
-
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({
+  children,
+}: Readonly<{
+  children: React.ReactNode
+}>) {
   return (
     <html lang="en">
       <head>
@@ -39,12 +49,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body className={`font-sans ${GeistSans.variable} ${GeistMono.variable}`}>
         <div className="min-h-screen bg-background">
-          {/* Keep layout simple; no Suspense around client components */}
-          <Navigation />
-          {/* Sidebar offset on md+, & bottom padding for mobile bottom bar */}
-          <main className="md:pl-64 pb-[calc(64px+env(safe-area-inset-bottom))]">
-            {children}
-          </main>
+          <Suspense fallback={<div>Loading...</div>}>
+            <Navigation />
+            <main className="md:pl-64">{children}</main>
+          </Suspense>
         </div>
         <Analytics />
       </body>
