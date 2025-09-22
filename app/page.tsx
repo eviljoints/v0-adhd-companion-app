@@ -43,18 +43,21 @@ export default async function HomePage() {
       .slice(0, 2) || []
 
   return (
-    <DashboardClient
-      user={user}
-      profile={profile}
-      stats={{
-        // add hrefs for the two stats you want to be clickable
-        activeReminders: { label: "Active Reminders", value: activeReminders, href: "/appointments" },
-        vipContactsCount: { label: "VIP Contacts", value: vipContactsCount, href: "/contacts" },
-        streakDays: { label: "Streak Days", value: streakDays }, // no link requested
-        completedToday: { label: "Completed Today", value: completedToday }, // no link requested
-      }}
-      recentAppointments={recentAppointments}
-      contactsNeedingAttention={contactsNeedingAttention}
-    />
+    <div className="md:pl-64 w-full overflow-x-hidden pb-[calc(64px+env(safe-area-inset-bottom))]">
+      <div className="p-6">
+        <DashboardClient
+          user={user}
+          profile={profile}
+          stats={{
+            activeReminders: { label: "Active Reminders", value: activeReminders, href: "/appointments" },
+            vipContactsCount: { label: "VIP Contacts", value: vipContactsCount, href: "/contacts" },
+            streakDays: { label: "Streak Days", value: streakDays },
+            completedToday: { label: "Completed Today", value: completedToday },
+          }}
+          recentAppointments={recentAppointments}
+          contactsNeedingAttention={contactsNeedingAttention}
+        />
+      </div>
+    </div>
   )
 }

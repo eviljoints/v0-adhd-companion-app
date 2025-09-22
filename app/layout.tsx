@@ -51,7 +51,11 @@ export default function RootLayout({
         <div className="min-h-screen bg-background">
           <Suspense fallback={<div>Loading...</div>}>
             <Navigation />
-            <main className="md:pl-64 pb-24 md:pb-0">{children}</main>
+            // app/layout.tsx
+<main className="md:pl-64 pb-[calc(64px+env(safe-area-inset-bottom))]">
+  {children}
+</main>
+
           </Suspense>
         </div>
         <Analytics />
