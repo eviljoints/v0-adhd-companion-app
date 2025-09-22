@@ -1,4 +1,3 @@
-// app/appointments/page.tsx
 "use client"
 
 import type React from "react"
@@ -11,24 +10,11 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
+  Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger,
 } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import {
-  MapPin,
-  Plus,
-  Navigation,
-  AlertCircle,
-  CheckCircle2,
-  ImageIcon,
-  Edit,
-  Trash2,
-  Mic,
+  MapPin, Plus, Navigation, AlertCircle, CheckCircle2, ImageIcon, Edit, Trash2, Mic,
 } from "lucide-react"
 import { ImageUpload, ImageDisplay } from "@/components/image-upload"
 import { PushNotificationManager, LocationNotificationService } from "@/components/push-notifications"
@@ -73,31 +59,23 @@ type PickedPlace = {
 
 /* -------------------- Helpers -------------------- */
 
-// British-friendly datetime (DD/MM/YYYY, 24h). Respects saved timezone if provided.
 function formatDateTime(iso: string | null | undefined, tz?: string) {
   if (!iso) return ""
-  const locale = "en-GB" // force UK format; change to navigator.language || "en-GB" to auto-detect
+  const locale = "en-GB"
   const opts: Intl.DateTimeFormatOptions = {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
+    day: "2-digit", month: "2-digit", year: "numeric",
+    hour: "2-digit", minute: "2-digit", hour12: false,
     ...(tz ? { timeZone: tz } : {}),
   }
   return new Intl.DateTimeFormat(locale, opts).format(new Date(iso))
 }
 
-/** ISO (UTC) -> "YYYY-MM-DDTHH:mm" for <input type="datetime-local"> */
 export function utcISOToLocalDateTime(iso: string) {
   if (!iso) return ""
   const d = new Date(iso)
   const pad = (n: number) => String(n).padStart(2, "0")
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
-
-/** "YYYY-MM-DDTHH:mm" (local) -> UTC ISO string */
 export function localDateTimeToUTCISO(local: string) {
   if (!local) return ""
   return new Date(local).toISOString()
@@ -112,13 +90,13 @@ export default function AppointmentsPage() {
   const [isLoading, setIsLoading] = useState(true)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [editingAppointment, setEditingAppointment] = useState<Appointment | null>(null)
+
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null)
+  const [locAccuracy, setLocAccuracy] = useState<number | null>(null) // meters
   const [locationPermission, setLocationPermission] = useState<"granted" | "denied" | "prompt">("prompt")
 
-  // Sorting
   const [sortBy, setSortBy] = useState<"created" | "scheduled" | "proximity">("created")
 
-  // scheduled timeouts (time alarms)
   const timeoutsRef = useRef<Record<string, number>>({})
   const notificationServiceRef = useRef<LocationNotificationService | null>(null)
 
@@ -126,9 +104,7 @@ export default function AppointmentsPage() {
 
   useEffect(() => {
     const init = async () => {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser()
+      const { data: { user } } = await supabase.auth.getUser()
       if (!user) {
         router.push("/auth/login")
         return
@@ -137,8 +113,7 @@ export default function AppointmentsPage() {
       await loadAppointments(user.id)
       notificationServiceRef.current = new LocationNotificationService(user)
     }
-
-    init()
+    void init()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router])
 
@@ -155,31 +130,45 @@ export default function AppointmentsPage() {
       const rows = (data || []) as Appointment[]
       setAppointments(rows)
 
-      // start geofencing if we have permission and coords
-      if (
-        notificationServiceRef.current &&
-        typeof Notification !== "undefined" &&
-        Notification.permission === "granted"
-      ) {
+      if (notificationServiceRef.current && typeof Notification !== "undefined" && Notification.permission === "granted") {
         const toWatch = rows.filter((apt) => !apt.completed && apt.latitude != null && apt.longitude != null)
         notificationServiceRef.current.startWatching(toWatch)
       }
-
-      // schedule time-based alarms
       scheduleTimeAlarms(rows)
     }
     setIsLoading(false)
   }
 
   useEffect(() => {
-    // cleanup on unmount
+    // watchPosition for better accuracy + live updates
+    if (!("geolocation" in navigator)) return
+    let cleared = false
+
+    const onPos = (position: GeolocationPosition) => {
+      if (cleared) return
+      setUserLocation({ lat: position.coords.latitude, lng: position.coords.longitude })
+      setLocAccuracy(Number.isFinite(position.coords.accuracy) ? position.coords.accuracy : null)
+      setLocationPermission("granted")
+    }
+    const onErr = () => setLocationPermission("denied")
+
+    // Try a quick one-off first (fast UI), then start watch
+    navigator.geolocation.getCurrentPosition(onPos, onErr, { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 })
+    const watchId = navigator.geolocation.watchPosition(onPos, onErr, { enableHighAccuracy: true, maximumAge: 5000, timeout: 20000 })
+
+    return () => {
+      cleared = true
+      if (watchId) navigator.geolocation.clearWatch(watchId)
+    }
+  }, [])
+
+  useEffect(() => {
     return () => {
       notificationServiceRef.current?.stopWatching()
       Object.values(timeoutsRef.current).forEach((id) => clearTimeout(id))
     }
   }, [])
 
-  // Receive "play-sound" messages from the Service Worker on push
   useEffect(() => {
     if (!("serviceWorker" in navigator)) return
     const handler = (event: MessageEvent) => {
@@ -191,64 +180,35 @@ export default function AppointmentsPage() {
     return () => navigator.serviceWorker.removeEventListener("message", handler)
   }, [])
 
-  /** Delete a reminder + clean up media + clear timers */
   const deleteAppointment = async (apt: Appointment) => {
     if (!user) return
     if (!window.confirm("Delete this reminder? This will also remove any attached image/voice note.")) return
 
-    // delete row
-    const { error: delErr } = await supabase
-      .from("appointments")
-      .delete()
-      .eq("id", apt.id)
-      .eq("user_id", user.id)
-
+    const { error: delErr } = await supabase.from("appointments").delete().eq("id", apt.id).eq("user_id", user.id)
     if (delErr) {
       console.error("Error deleting appointment:", delErr)
       return
     }
 
-    // update UI
     setAppointments((prev) => prev.filter((a) => a.id !== apt.id))
 
-    // clear local timer if present
     if (timeoutsRef.current[apt.id]) {
       clearTimeout(timeoutsRef.current[apt.id])
       delete timeoutsRef.current[apt.id]
     }
 
-    // storage cleanup best-effort
-    try { if (apt.image_url) await removeByPublicUrl(apt.image_url) } catch (e) { console.warn("Image delete:", e) }
-    try { if (apt.voice_note_url) await removeByPublicUrl(apt.voice_note_url) } catch (e) { console.warn("Voice delete:", e) }
+    try { if (apt.image_url) await removeByPublicUrl(apt.image_url) } catch {}
+    try { if (apt.voice_note_url) await removeByPublicUrl(apt.voice_note_url) } catch {}
 
-    // restart geofence for remaining
-    if (
-      notificationServiceRef.current &&
-      typeof Notification !== "undefined" &&
-      Notification.permission === "granted"
-    ) {
-      const toWatch = appointments
-        .filter((a) => a.id !== apt.id)
-        .filter((a) => !a.completed && a.latitude != null && a.longitude != null)
+    if (notificationServiceRef.current && typeof Notification !== "undefined" && Notification.permission === "granted") {
+      const toWatch = appointments.filter((a) => a.id !== apt.id).filter((a) => !a.completed && a.latitude != null && a.longitude != null)
       notificationServiceRef.current.startWatching(toWatch)
     }
   }
 
-  // Optional device location (used for distance badge + proximity sorting)
-  useEffect(() => {
-    if ("geolocation" in navigator) {
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          setUserLocation({ lat: position.coords.latitude, lng: position.coords.longitude })
-          setLocationPermission("granted")
-        },
-        () => setLocationPermission("denied"),
-      )
-    }
-  }, [])
+  /* -------- Distance helpers (with accuracy compensation) -------- */
 
-  // Distance helpers
-  const calculateDistance = (lat1: number, lng1: number, lat2: number, lng2: number) => {
+  const haversineMeters = (lat1: number, lng1: number, lat2: number, lng2: number) => {
     const R = 6371e3
     const φ1 = (lat1 * Math.PI) / 180
     const φ2 = (lat2 * Math.PI) / 180
@@ -263,19 +223,24 @@ export default function AppointmentsPage() {
 
   const getDistanceToAppointment = (a: Appointment) => {
     if (!userLocation || a.latitude == null || a.longitude == null) return null
-    return calculateDistance(userLocation.lat, userLocation.lng, a.latitude, a.longitude)
+    const raw = haversineMeters(userLocation.lat, userLocation.lng, a.latitude, a.longitude)
+    const acc = locAccuracy ?? 0
+    // Effective distance: if GPS says ±acc meters, subtract that "uncertainty"
+    return Math.max(0, raw - acc)
   }
 
   const isNearby = (a: Appointment) => {
-    const d = getDistanceToAppointment(a)
-    return d !== null && d <= a.trigger_distance
+    if (!userLocation || a.latitude == null || a.longitude == null) return false
+    const raw = haversineMeters(userLocation.lat, userLocation.lng, a.latitude, a.longitude)
+    const acc = locAccuracy ?? 0
+    // Consider inside if within trigger + current accuracy bubble
+    return raw <= a.trigger_distance + acc
   }
 
   const toggleComplete = async (id: string) => {
     if (!user) return
     const current = appointments.find((a) => a.id === id)
     if (!current) return
-
     const { error } = await supabase
       .from("appointments")
       .update({ completed: !current.completed, updated_at: new Date().toISOString() })
@@ -287,18 +252,10 @@ export default function AppointmentsPage() {
     } else {
       const next = appointments.map((a) => (a.id === id ? { ...a, completed: !a.completed } : a))
       setAppointments(next)
-
-      // reschedule geofencing
-      if (
-        notificationServiceRef.current &&
-        typeof Notification !== "undefined" &&
-        Notification.permission === "granted"
-      ) {
+      if (notificationServiceRef.current && typeof Notification !== "undefined" && Notification.permission === "granted") {
         const toWatch = next.filter((apt) => !apt.completed && apt.latitude != null && apt.longitude != null)
         notificationServiceRef.current.startWatching(toWatch)
       }
-
-      // reschedule time alarms
       scheduleTimeAlarms(next)
     }
   }
@@ -308,31 +265,17 @@ export default function AppointmentsPage() {
   const showAlarm = async (apt: Appointment) => {
     const title = apt.title || "Reminder"
     const body = apt.location_name ? `${apt.location_name}` : "Time’s up!"
-
-    // Native notification (even in background)
     try {
       if (typeof Notification !== "undefined" && Notification.permission === "granted") {
         const reg = await navigator.serviceWorker?.ready
         if (reg?.showNotification) {
-          await reg.showNotification(title, {
-            body,
-            tag: `apt-${apt.id}`,
-            requireInteraction: true,
-          })
+          await reg.showNotification(title, { body, tag: `apt-${apt.id}`, requireInteraction: true })
         } else {
           new Notification(title, { body, tag: `apt-${apt.id}` })
         }
       }
-    } catch (e) {
-      console.warn("Notification failed:", e)
-    }
-
-    // In-tab LOUD alarm (if user enabled)
-    try {
-      if (isAlarmReady()) playAlarmLoop({ durationMs: 20000, cycles: 4 })
     } catch {}
-
-    // Mark as delivered
+    try { if (isAlarmReady()) playAlarmLoop({ durationMs: 20000, cycles: 4 }) } catch {}
     await supabase
       .from("appointments")
       .update({ time_alert_sent: true, updated_at: new Date().toISOString() })
@@ -341,7 +284,6 @@ export default function AppointmentsPage() {
   }
 
   const scheduleTimeAlarms = (rows: Appointment[]) => {
-    // clear existing
     Object.values(timeoutsRef.current).forEach((id) => clearTimeout(id))
     timeoutsRef.current = {}
 
@@ -351,18 +293,11 @@ export default function AppointmentsPage() {
       .forEach((a) => {
         const when = new Date(a.scheduled_at as string).getTime()
         const delay = when - now
-
         if (delay <= 0) {
-          // overdue => fire immediately
           void showAlarm(a)
           return
         }
-
-        // set timeout (cap by 24h chunk)
-        const id = window.setTimeout(() => {
-          void showAlarm(a)
-        }, Math.min(delay, 24 * 60 * 60 * 1000))
-
+        const id = window.setTimeout(() => void showAlarm(a), Math.min(delay, 24 * 60 * 60 * 1000))
         timeoutsRef.current[a.id] = id
       })
   }
@@ -381,14 +316,12 @@ export default function AppointmentsPage() {
       })
     } else if (sortBy === "proximity") {
       copy.sort((a, b) => {
-        const da =
-          a.latitude != null && a.longitude != null && userLocation
-            ? calculateDistance(userLocation.lat, userLocation.lng, a.latitude, a.longitude)
-            : Number.POSITIVE_INFINITY
-        const db =
-          b.latitude != null && b.longitude != null && userLocation
-            ? calculateDistance(userLocation.lat, userLocation.lng, b.latitude, b.longitude)
-            : Number.POSITIVE_INFINITY
+        const da = (a.latitude != null && a.longitude != null && userLocation)
+          ? getDistanceToAppointment(a) ?? Number.POSITIVE_INFINITY
+          : Number.POSITIVE_INFINITY
+        const db = (b.latitude != null && b.longitude != null && userLocation)
+          ? getDistanceToAppointment(b) ?? Number.POSITIVE_INFINITY
+          : Number.POSITIVE_INFINITY
         return da - db
       })
     }
@@ -418,20 +351,20 @@ export default function AppointmentsPage() {
     <div className="md:pl-64 w-full overflow-x-hidden">
       <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
         {/* Header */}
-        <div className="flex items-start sm:items-center justify-between gap-3 flex-col sm:flex-row">
-          <div className="w-full">
-            <h1 className="text-2xl sm:text-3xl font-bold">Location &amp; Time Reminders</h1>
-            <p className="text-muted-foreground mt-1 text-sm sm:text-base">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div>
+            <h1 className="text-3xl font-bold">Location &amp; Time Reminders</h1>
+            <p className="text-muted-foreground mt-1">
               Geo-tagged nudges and optional alarm times that fit ADHD rhythms
             </p>
           </div>
 
-          <div className="flex items-center gap-2 w-full sm:w-auto">
+          <div className="flex items-center gap-2">
             {/* Sort control */}
-            <div className="flex items-center gap-2 mr-2 ml-auto sm:ml-0">
-              <Label className="text-xs sm:text-sm text-muted-foreground">Sort</Label>
+            <div className="flex items-center gap-2 mr-2">
+              <Label className="text-sm text-muted-foreground">Sort</Label>
               <Select value={sortBy} onValueChange={(v: "created" | "scheduled" | "proximity") => setSortBy(v)}>
-                <SelectTrigger className="w-36 sm:w-44 h-9 sm:h-10">
+                <SelectTrigger className="w-36 sm:w-44">
                   <SelectValue placeholder="Sort by" />
                 </SelectTrigger>
                 <SelectContent>
@@ -442,10 +375,10 @@ export default function AppointmentsPage() {
               </Select>
             </div>
 
-            {/* Add (hidden on mobile; FAB shown below) */}
+            {/* Add */}
             <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
               <DialogTrigger asChild>
-                <Button className="hidden sm:inline-flex">
+                <Button>
                   <Plus className="h-4 w-4 mr-2" />
                   Add Reminder
                 </Button>
@@ -488,14 +421,17 @@ export default function AppointmentsPage() {
 
         {/* Location Status */}
         <Card>
-          <CardContent className="pt-4 sm:pt-6">
+          <CardContent className="pt-6">
             <div className="flex items-center gap-3">
               <Navigation className="h-5 w-5 text-blue-600" />
               <div className="flex-1">
                 {locationPermission === "granted" ? (
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-medium text-green-600">Location access enabled</span>
-                    <Badge variant="secondary" className="text-[11px] py-0.5">{nearbyAppointments.length} nearby</Badge>
+                    <Badge variant="secondary">{nearbyAppointments.length} nearby</Badge>
+                    {locAccuracy != null && (
+                      <span className="text-xs text-muted-foreground">±{Math.round(locAccuracy)}m</span>
+                    )}
                   </div>
                 ) : locationPermission === "denied" ? (
                   <span className="text-sm font-medium text-red-600">Location access denied</span>
@@ -602,16 +538,6 @@ export default function AppointmentsPage() {
           </DialogContent>
         </Dialog>
       </div>
-
-      {/* Mobile FAB */}
-      <button
-        type="button"
-        onClick={() => setIsDialogOpen(true)}
-        className="sm:hidden fixed bottom-4 right-4 z-40 h-14 w-14 rounded-full shadow-xl bg-primary text-primary-foreground active:scale-95 transition"
-        aria-label="Add Reminder"
-      >
-        <Plus className="h-6 w-6 mx-auto" />
-      </button>
     </div>
   )
 }
@@ -624,14 +550,10 @@ function formatDistance(distance: number) {
 }
 function getPriorityColor(priority: string) {
   switch (priority) {
-    case "high":
-      return "text-red-600 bg-red-50 border-red-200"
-    case "medium":
-      return "text-orange-600 bg-orange-50 border-orange-200"
-    case "low":
-      return "text-green-600 bg-green-50 border-green-200"
-    default:
-      return "text-gray-600 bg-gray-50 border-gray-200"
+    case "high": return "text-red-600 bg-red-50 border-red-200"
+    case "medium": return "text-orange-600 bg-orange-50 border-orange-200"
+    case "low": return "text-green-600 bg-green-50 border-green-200"
+    default: return "text-gray-600 bg-gray-50 border-gray-200"
   }
 }
 
@@ -657,16 +579,10 @@ function QuickTimer({ id, title }: { id: string; title: string }) {
     return () => clearInterval(t)
   }, [running, secondsLeft, title])
 
-  const start = (mins: number) => {
-    setSecondsLeft(mins * 60)
-    setRunning(true)
-  }
+  const start = (mins: number) => { setSecondsLeft(mins * 60); setRunning(true) }
   const pause = () => setRunning(false)
   const resume = () => secondsLeft != null && secondsLeft > 0 && setRunning(true)
-  const reset = () => {
-    setRunning(false)
-    setSecondsLeft(null)
-  }
+  const reset = () => { setRunning(false); setSecondsLeft(null) }
 
   const mm = String(Math.floor((secondsLeft ?? 0) / 60)).padStart(2, "0")
   const ss = String((secondsLeft ?? 0) % 60).padStart(2, "0")
@@ -692,12 +608,7 @@ function QuickTimer({ id, title }: { id: string; title: string }) {
 }
 
 function AppointmentCard({
-  appointment,
-  distance,
-  isNearby,
-  onToggleComplete,
-  onEdit,
-  onDelete,
+  appointment, distance, isNearby, onToggleComplete, onEdit, onDelete,
 }: {
   appointment: Appointment
   distance: number | null
@@ -706,6 +617,7 @@ function AppointmentCard({
   onEdit: (appointment: Appointment) => void
   onDelete: (appointment: Appointment) => void
 }) {
+  const distanceLabel = distance == null ? null : `≈${formatDistance(distance)}`
   return (
     <Card
       className={cn(
@@ -721,8 +633,6 @@ function AppointmentCard({
             size="icon"
             onClick={() => onToggleComplete(appointment.id)}
             className={cn("mt-1 flex-shrink-0", appointment.completed && "text-green-600")}
-            aria-label={appointment.completed ? "Mark as incomplete" : "Mark as complete"}
-            title={appointment.completed ? "Mark as incomplete" : "Mark as complete"}
           >
             <CheckCircle2 className={cn("h-5 w-5", appointment.completed && "fill-current")} />
           </Button>
@@ -730,11 +640,11 @@ function AppointmentCard({
           <div className="flex-1 min-w-0">
             <div className="flex items-start justify-between gap-4">
               <div className="flex-1">
-                <h3 className={cn("font-semibold text-base sm:text-lg break-words", appointment.completed && "line-through text-gray-500")}>
+                <h3 className={cn("font-semibold text-lg break-words", appointment.completed && "line-through text-gray-500")}>
                   {appointment.title || "Untitled reminder"}
                 </h3>
                 {appointment.description && (
-                  <p className="text-gray-600 dark:text-gray-300 mt-1 break-words text-sm sm:text-base">{appointment.description}</p>
+                  <p className="text-gray-600 dark:text-gray-300 mt-1 break-words">{appointment.description}</p>
                 )}
 
                 {/* Location line */}
@@ -745,8 +655,8 @@ function AppointmentCard({
                       <span className="text-sm text-gray-600">{appointment.location_name}</span>
                     </>
                   )}
-                  {distance !== null && (
-                    <Badge variant="outline" className="ml-2">{formatDistance(distance)}</Badge>
+                  {distanceLabel && (
+                    <Badge variant="outline" className="ml-2">{distanceLabel}</Badge>
                   )}
                 </div>
 
@@ -764,7 +674,7 @@ function AppointmentCard({
                     <ImageDisplay
                       src={appointment.image_url || "/placeholder.svg"}
                       alt={`Image for ${appointment.title || "reminder"}`}
-                      className="w-full max-w-full h-auto md:max-w-xs max-h-48 object-cover rounded-lg"
+                      className="w-full max-w-full h-auto md:max-w-xs"
                     />
                   </div>
                 )}
@@ -778,7 +688,9 @@ function AppointmentCard({
                     Alarm at {formatDateTime(appointment.scheduled_at, appointment.schedule_timezone ?? undefined)}
                   </p>
                 )}
-                {appointment.time_alert_sent && <p className="text-xs text-green-600 mt-2">Alarm sent</p>}
+                {appointment.time_alert_sent && (
+                  <p className="text-xs text-green-600 mt-2">Alarm sent</p>
+                )}
               </div>
 
               <div className="flex flex-col items-end gap-2">
@@ -790,12 +702,12 @@ function AppointmentCard({
                     variant="destructive"
                     size="sm"
                     onClick={() => onDelete(appointment)}
-                    className="h-8 px-2 sm:px-3"
+                    className="h-8"
                     aria-label="Delete reminder"
                     title="Delete"
                   >
-                    <Trash2 className="h-4 w-4" />
-                    <span className="hidden sm:inline ml-1">Delete</span>
+                    <Trash2 className="h-4 w-4 mr-1" />
+                    Delete
                   </Button>
 
                   {/* Edit */}
@@ -803,15 +715,17 @@ function AppointmentCard({
                     variant="outline"
                     size="sm"
                     onClick={() => onEdit(appointment)}
-                    className="h-8 bg-transparent px-2 sm:px-3"
+                    className="h-8"
                     aria-label="Edit reminder"
                     title="Edit"
                   >
-                    <Edit className="h-4 w-4" />
-                    <span className="hidden sm:inline ml-1">Edit</span>
+                    <Edit className="h-4 w-4 mr-1" />
+                    Edit
                   </Button>
                 </div>
-                {isNearby && !appointment.completed && <Badge variant="default" className="bg-orange-600">Nearby!</Badge>}
+                {isNearby && !appointment.completed && (
+                  <Badge variant="default" className="bg-orange-600">Nearby!</Badge>
+                )}
                 <div className="flex flex-col gap-1">
                   {appointment.voice_note_url && (
                     <Badge variant="outline" className="flex items-center gap-1">
@@ -836,11 +750,7 @@ function AppointmentCard({
 /* -------------------- Form -------------------- */
 
 function AppointmentForm({
-  user,
-  userLocation,
-  appointment,
-  onClose,
-  onSuccess,
+  user, userLocation, appointment, onClose, onSuccess,
 }: {
   user: User | null
   userLocation: { lat: number; lng: number } | null
@@ -867,7 +777,6 @@ function AppointmentForm({
 
   const supabase = createClient()
 
-  // Fallback geocoder if user typed raw text instead of picking a suggestion
   const geocodeAddress = async (q: string) => {
     const r = await fetch(`/api/geocode?q=${encodeURIComponent(q)}`, { cache: "no-store" })
     if (!r.ok) throw new Error((await r.json()).error || "Failed to geocode")
@@ -881,7 +790,7 @@ function AppointmentForm({
     setFormError(null)
 
     try {
-      // 1) Coordinates (optional) — prefer picked place, else geocode typed address, else userLocation, else null
+      // Coordinates — prefer picked place, else geocode, else current location, else leave null
       let latitude: number | null = appointment?.latitude ?? null
       let longitude: number | null = appointment?.longitude ?? null
       let locationName: string | null = formData.location_name?.trim() || null
@@ -900,7 +809,21 @@ function AppointmentForm({
         longitude = userLocation.lng
       }
 
-      // 2) Media (optional)
+      // --- Normalize coordinates (swap if obviously flipped, clamp lon, clear 0/0) ---
+      if (latitude != null && longitude != null) {
+        if (Math.abs(latitude) > 90 && Math.abs(longitude) <= 90) {
+          [latitude, longitude] = [longitude, latitude]
+        }
+        if (longitude > 180 || longitude < -180) {
+          longitude = ((longitude + 180) % 360 + 360) % 360 - 180
+        }
+        if (latitude === 0 && longitude === 0) {
+          latitude = null
+          longitude = null
+        }
+      }
+
+      // Media (optional)
       let imageUrl = appointment?.image_url || null
       if (selectedImage?.file && selectedImage.file.size > 0) {
         const { uploadToBucket } = await import("@/lib/storage")
@@ -914,7 +837,7 @@ function AppointmentForm({
         voiceNoteDuration = voiceRecording.duration
       }
 
-      // 3) Time alarm (optional)
+      // Time alarm (optional)
       let scheduled_at: string | null = null
       let schedule_timezone: string | null = null
       if (formData.scheduled_local.trim()) {
@@ -922,26 +845,7 @@ function AppointmentForm({
         schedule_timezone = Intl.DateTimeFormat().resolvedOptions().timeZone
       }
 
-      // --- Normalize coordinates (fix common lon/lat mixups & bounds) ---
-      if (latitude != null && longitude != null) {
-        // If provider returned [lon, lat] but we stored as [lat, lon]
-        if (Math.abs(latitude) > 90 && Math.abs(longitude) <= 90) {
-          ;[latitude, longitude] = [longitude, latitude]
-        }
-
-        // Clamp longitude to [-180, 180]
-        if (longitude > 180 || longitude < -180) {
-          longitude = ((longitude + 180) % 360 + 360) % 360 - 180
-        }
-
-        // Kill the (0,0) pitfall
-        if (latitude === 0 && longitude === 0) {
-          latitude = null
-          longitude = null
-        }
-      }
-
-      // 4) Build payload
+      // Payload
       const payload: Record<string, any> = {
         title: (formData.title || "Untitled reminder").trim(),
         updated_at: new Date().toISOString(),
@@ -963,16 +867,10 @@ function AppointmentForm({
       }
 
       if (appointment) {
-        const { error } = await supabase
-          .from("appointments")
-          .update(payload)
-          .eq("id", appointment.id)
-          .eq("user_id", user.id)
+        const { error } = await supabase.from("appointments").update(payload).eq("id", appointment.id).eq("user_id", user.id)
         if (error) throw error
       } else {
-        const { error } = await supabase
-          .from("appointments")
-          .insert([{ user_id: user.id, ...payload }])
+        const { error } = await supabase.from("appointments").insert([{ user_id: user.id, ...payload }])
         if (error) throw error
       }
 
@@ -988,7 +886,7 @@ function AppointmentForm({
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
-      {/* Title (required) */}
+      {/* Title */}
       <div>
         <Label htmlFor="title">Reminder Title</Label>
         <Input
@@ -1000,7 +898,7 @@ function AppointmentForm({
         />
       </div>
 
-      {/* Description (optional) */}
+      {/* Description */}
       <div>
         <Label htmlFor="description">Description (optional)</Label>
         <Textarea
@@ -1011,7 +909,7 @@ function AppointmentForm({
         />
       </div>
 
-      {/* Location Name (optional) */}
+      {/* Location Name */}
       <div>
         <Label htmlFor="location_name">Location Name (optional)</Label>
         <Input
@@ -1022,7 +920,7 @@ function AppointmentForm({
         />
       </div>
 
-      {/* Address (optional) with autocomplete */}
+      {/* Address autocomplete (create only) */}
       {!appointment && (
         <div>
           <Label htmlFor="address">Address or Place (optional)</Label>
@@ -1030,11 +928,11 @@ function AppointmentForm({
             value={formData.address}
             onValueChange={(v) => {
               setFormData((p) => ({ ...p, address: v }))
-              setPickedPlace(null) // reset if user types again after picking
+              setPickedPlace(null)
             }}
             userLocation={userLocation || null}
             onPick={(place) => {
-              setPickedPlace(place as PickedPlace)
+              setPickedPlace(place)
               setFormData((p) => ({
                 ...p,
                 address: place.address,
@@ -1070,8 +968,7 @@ function AppointmentForm({
           <Label>Priority</Label>
           <Select
             value={formData.priority}
-            onValueChange={(v: "low" | "medium" | "high") => setFormData((p) => ({ ...p, priority: v })) }
-          >
+            onValueChange={(v: "low" | "medium" | "high") => setFormData((p) => ({ ...p, priority: v }))}>
             <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="low">Low</SelectItem>
@@ -1082,7 +979,7 @@ function AppointmentForm({
         </div>
       </div>
 
-      {/* Time Alarm (optional) */}
+      {/* Time Alarm */}
       <div>
         <Label htmlFor="scheduled_local">Alarm time (optional)</Label>
         <Input
@@ -1096,7 +993,7 @@ function AppointmentForm({
         </p>
       </div>
 
-      {/* Voice note (optional) */}
+      {/* Voice note */}
       <div>
         <Label>Voice Note (optional)</Label>
         <VoiceRecorder
@@ -1107,7 +1004,7 @@ function AppointmentForm({
         />
       </div>
 
-      {/* Image (optional) */}
+      {/* Image */}
       <div>
         <Label>Attach Image (optional)</Label>
         <ImageUpload
