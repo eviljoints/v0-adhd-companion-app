@@ -1,6 +1,6 @@
 // app\layout.tsx
 import type React from "react"
-import { Metadata, viewport } from "next"
+import { Metadata, Viewport } from "next"
 import { GeistSans } from "geist/font/sans"
 import { GeistMono } from "geist/font/mono"
 import { Analytics } from "@vercel/analytics/next"
@@ -16,18 +16,18 @@ export const metadata: Metadata = {
   generator: "v0.app",
   manifest: "/manifest.json",
   themeColor: "#3b82f6",
-  viewport: { viewport,
-    width: "device-width",
-    initialScale: 1,
-    maximumScale: 1,
-    userScalable: false,
-    viewportFit: "cover",
-  },
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
     title: "ADHD Companion",
   },
+}
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+  viewportFit: "cover",
 }
 
 export default function RootLayout({
