@@ -1,4 +1,3 @@
-// app\layout.tsx
 import type React from "react"
 import { Metadata, viewport } from "next"
 import { GeistSans } from "geist/font/sans"

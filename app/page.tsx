@@ -1,4 +1,3 @@
-// app/page.tsx
 import { redirect } from "next/navigation"
 import { createClient } from "@/lib/supabase/server"
 import { DashboardClient } from "@/components/dashboard-client"
@@ -43,21 +42,17 @@ export default async function HomePage() {
       .slice(0, 2) || []
 
   return (
-    <div className="w-full overflow-x-hidden">
-  <div className="p-6">
-        <DashboardClient
-          user={user}
-          profile={profile}
-          stats={{
-            activeReminders: { label: "Active Reminders", value: activeReminders, href: "/appointments" },
-            vipContactsCount: { label: "VIP Contacts", value: vipContactsCount, href: "/contacts" },
-            streakDays: { label: "Streak Days", value: streakDays },
-            completedToday: { label: "Completed Today", value: completedToday },
-          }}
-          recentAppointments={recentAppointments}
-          contactsNeedingAttention={contactsNeedingAttention}
-        />
-      </div>
-    </div>
+    <DashboardClient
+      user={user}
+      profile={profile}
+      stats={{
+        activeReminders,
+        vipContactsCount,
+        streakDays,
+        completedToday,
+      }}
+      recentAppointments={recentAppointments}
+      contactsNeedingAttention={contactsNeedingAttention}
+    />
   )
 }
