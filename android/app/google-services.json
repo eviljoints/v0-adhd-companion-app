@@ -9,6 +9,25 @@
       "client_info": {
         "mobilesdk_app_id": "1:432904140600:android:fe270810b1c26eadaaf3cd",
         "android_client_info": {
+          "package_name": "com.ADHD.adhdcompanion"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCizm6ouFOMqtZiiyoY7sRBJg7Lxrve_ts"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:432904140600:android:e8e5b89a6234313baaf3cd",
+        "android_client_info": {
           "package_name": "com.adhd.adhdcompanion"
         }
       },
