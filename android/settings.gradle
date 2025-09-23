@@ -1,5 +1,43 @@
-include ':app'
-include ':capacitor-cordova-android-plugins'
-project(':capacitor-cordova-android-plugins').projectDir = new File('./capacitor-cordova-android-plugins/')
+pluginManagement {
+  repositories {
+    google()
+    mavenCentral()
+    gradlePluginPortal()
+  }
+  plugins {
+    id("com.android.application") version "8.7.2" apply false
+    id("com.android.library")     version "8.7.2" apply false
+    id("org.jetbrains.kotlin.android") version "1.9.22" apply false
+  }
+}
 
-apply from: 'capacitor.settings.gradle'
+dependencyResolutionManagement {
+  repositoriesMode.set(RepositoriesMode.PREFER_SETTINGS)
+  repositories {
+    google()
+    mavenCentral()
+  }
+}
+
+rootProject.name = "app"
+
+include(":app")
+include(":capacitor-android")
+project(":capacitor-android").projectDir = new File("../node_modules/@capacitor/android/capacitor")
+
+include(":capacitor-cordova-android-plugins")
+project(":capacitor-cordova-android-plugins").projectDir = new File("capacitor-cordova-android-plugins")
+
+include(":capacitor-app")
+project(":capacitor-app").projectDir = new File("../node_modules/@capacitor/app/android")
+include(":capacitor-browser")
+project(":capacitor-browser").projectDir = new File("../node_modules/@capacitor/browser/android")
+include(":capacitor-geolocation")
+project(":capacitor-geolocation").projectDir = new File("../node_modules/@capacitor/geolocation/android")
+include(":capacitor-local-notifications")
+project(":capacitor-local-notifications").projectDir = new File("../node_modules/@capacitor/local-notifications/android")
+include(":capacitor-push-notifications")
+project(":capacitor-push-notifications").projectDir = new File("../node_modules/@capacitor/push-notifications/android")
+include(":capacitor-community-background-geolocation")
+project(":capacitor-community-background-geolocation").projectDir =
+  new File("../node_modules/@capacitor-community/background-geolocation/android")

@@ -74,7 +74,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@capacitor/android@npm:^7.4.3":
+"@capacitor/android@npm:^7.0.0":
   version: 7.4.3
   resolution: "@capacitor/android@npm:7.4.3"
   peerDependencies:
@@ -83,7 +83,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@capacitor/app@npm:^7.1.0":
+"@capacitor/app@npm:^7.0.0":
   version: 7.1.0
   resolution: "@capacitor/app@npm:7.1.0"
   peerDependencies:
@@ -92,7 +92,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@capacitor/browser@npm:^7.0.2":
+"@capacitor/browser@npm:^7.0.0":
   version: 7.0.2
   resolution: "@capacitor/browser@npm:7.0.2"
   peerDependencies:
@@ -101,7 +101,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@capacitor/cli@npm:^7.4.3":
+"@capacitor/cli@npm:^7.0.0":
   version: 7.4.3
   resolution: "@capacitor/cli@npm:7.4.3"
   dependencies:
@@ -129,7 +129,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@capacitor/core@npm:^7.4.3":
+"@capacitor/core@npm:^7.0.0":
   version: 7.4.3
   resolution: "@capacitor/core@npm:7.4.3"
   dependencies:
@@ -138,7 +138,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@capacitor/geolocation@npm:^7.1.5":
+"@capacitor/geolocation@npm:^7.0.0":
   version: 7.1.5
   resolution: "@capacitor/geolocation@npm:7.1.5"
   dependencies:
@@ -149,7 +149,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@capacitor/local-notifications@npm:^7.0.3":
+"@capacitor/local-notifications@npm:^7.0.0":
   version: 7.0.3
   resolution: "@capacitor/local-notifications@npm:7.0.3"
   peerDependencies:
@@ -158,7 +158,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@capacitor/push-notifications@npm:^7.0.3":
+"@capacitor/push-notifications@npm:^7.0.0":
   version: 7.0.3
   resolution: "@capacitor/push-notifications@npm:7.0.3"
   peerDependencies:
@@ -3588,14 +3588,14 @@ __metadata:
   dependencies:
     "@ai-sdk/openai": "npm:latest"
     "@capacitor-community/background-geolocation": "npm:^1.2.26"
-    "@capacitor/android": "npm:^7.4.3"
-    "@capacitor/app": "npm:^7.1.0"
-    "@capacitor/browser": "npm:^7.0.2"
-    "@capacitor/cli": "npm:^7.4.3"
-    "@capacitor/core": "npm:^7.4.3"
-    "@capacitor/geolocation": "npm:^7.1.5"
-    "@capacitor/local-notifications": "npm:^7.0.3"
-    "@capacitor/push-notifications": "npm:^7.0.3"
+    "@capacitor/android": "npm:^7.0.0"
+    "@capacitor/app": "npm:^7.0.0"
+    "@capacitor/browser": "npm:^7.0.0"
+    "@capacitor/cli": "npm:^7.0.0"
+    "@capacitor/core": "npm:^7.0.0"
+    "@capacitor/geolocation": "npm:^7.0.0"
+    "@capacitor/local-notifications": "npm:^7.0.0"
+    "@capacitor/push-notifications": "npm:^7.0.0"
     "@hookform/resolvers": "npm:^3.10.0"
     "@radix-ui/react-accordion": "npm:1.2.2"
     "@radix-ui/react-alert-dialog": "npm:1.1.4"
