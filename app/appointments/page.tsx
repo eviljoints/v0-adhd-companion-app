@@ -125,6 +125,12 @@ export default function AppointmentsPage() {
     localStorage.setItem("adhd.alarm.loud", JSON.stringify(loudEnabled))
   }, [loudEnabled])
 
+  // Reschedule when loud mode changes
+  useEffect(() => {
+    if (appointments.length) void scheduleTimeAlarms(appointments)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loudEnabled])
+
   // Hash appointment id -> numeric notification id (stable)
   const toNotifId = (s: string) => {
     let h = 0
@@ -260,6 +266,15 @@ export default function AppointmentsPage() {
       delete timeoutsRef.current[apt.id]
     }
 
+    // cancel any native schedules for this id
+    try {
+      const nid = toNotifId(apt.id)
+      if (Capacitor.isNativePlatform()) {
+        await AlarmPlugin.cancelScheduled({ id: nid }).catch(() => {})
+        await LocalNotifications.cancel({ notifications: [{ id: nid }] }).catch(() => {})
+      }
+    } catch {}
+
     try { if (apt.image_url) await removeByPublicUrl(apt.image_url) } catch {}
     try { if (apt.voice_note_url) await removeByPublicUrl(apt.voice_note_url) } catch {}
 
@@ -310,31 +325,44 @@ export default function AppointmentsPage() {
       timeoutsRef.current[a.id] = id
     })
 
-    // Native background: schedule local notifications (rings with channel sound)
+    // Native background
     if (Capacitor.isNativePlatform()) {
       try {
-        // Cancel any existing scheduled with same ids
-        const pendingNative = await LocalNotifications.getPending()
-        const ours = new Set(pending.map((a) => toNotifId(a.id)))
-        const toCancel = (pendingNative.notifications || [])
-          .filter((n) => n.id != null && ours.has(n.id))
-          .map((n) => n.id as number)
-        if (toCancel.length) await LocalNotifications.cancel({ notifications: toCancel.map((id) => ({ id })) })
+        if (loudEnabled) {
+          // Full-screen exact alarms (AlarmManager) via plugin — reboot-safe
+          for (const a of pending) {
+            const id = toNotifId(a.id)
+            const when = new Date(a.scheduled_at as string).getTime()
+            // cancel existing then schedule exact
+            await AlarmPlugin.cancelScheduled({ id }).catch(() => {})
+            await AlarmPlugin.scheduleFullScreenExact({
+              id,
+              at: when,
+              title: a.title || "Reminder",
+              body: a.location_name || "Time’s up!",
+            })
+          }
+        } else {
+          // LocalNotifications schedule (heads-up, uses channel sound)
+          const existing = await LocalNotifications.getPending()
+          const ours = new Set(pending.map((a) => toNotifId(a.id)))
+          const toCancel = (existing.notifications || [])
+            .filter((n) => n.id != null && ours.has(n.id as number))
+            .map((n) => ({ id: n.id as number }))
+          if (toCancel.length) await LocalNotifications.cancel({ notifications: toCancel })
 
-        const notifPayloads = pending.map((a) => {
-          const when = new Date(a.scheduled_at as string)
-          return {
+          const notifPayloads = pending.map((a) => ({
             id: toNotifId(a.id),
             title: a.title || "Reminder",
             body: a.location_name || "Time’s up!",
             smallIcon: "ic_launcher",
             channelId: "alarms",
             sound: "alert",
-            schedule: { at: when }, // fires even if app is closed
+            schedule: { at: new Date(a.scheduled_at as string) },
+          }))
+          if (notifPayloads.length) {
+            await LocalNotifications.schedule({ notifications: notifPayloads })
           }
-        })
-        if (notifPayloads.length) {
-          await LocalNotifications.schedule({ notifications: notifPayloads })
         }
       } catch (e) {
         console.warn("Native schedule failed", e)
@@ -611,8 +639,21 @@ export default function AppointmentsPage() {
     } else {
       const next = appointments.map((a) => (a.id === id ? { ...a, completed: !a.completed } : a))
       setAppointments(next)
+
+      // cancel native schedule if just completed
+      const justToggled = next.find((x) => x.id === id)
+      if (justToggled?.completed) {
+        try {
+          const nid = toNotifId(justToggled.id)
+          if (Capacitor.isNativePlatform()) {
+            await AlarmPlugin.cancelScheduled({ id: nid }).catch(() => {})
+            await LocalNotifications.cancel({ notifications: [{ id: nid }] }).catch(() => {})
+          }
+        } catch {}
+      }
+
+      // reschedule rest + rewrite fences
       scheduleTimeAlarms(next)
-      // rewrite fences
       const fences = next
         .filter((a) => !a.completed && a.latitude != null && a.longitude != null && a.trigger_distance > 0)
         .map((a) => ({
@@ -1037,8 +1078,7 @@ function AppointmentForm({
           <Label>Reminder Distance</Label>
           <Select
             value={formData.trigger_distance}
-            onValueChange={(v) => setFormData((p) => ({ ...p, trigger_distance: v }))}
-          >
+            onValueChange={(v) => setFormData((p) => ({ ...p, trigger_distance: v }))}>
             <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="50">50m (very close)</SelectItem>
