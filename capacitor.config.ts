@@ -1,7 +1,7 @@
 import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
-  appId: 'com.ADHD.adhdcompanion',
+  appId: 'com.adhd.adhdcompanion',
   appName: 'ADHD Companion',
   // webDir is unused when server.url is set, but keep something valid:
   webDir: 'dist',

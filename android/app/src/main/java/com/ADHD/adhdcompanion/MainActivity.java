@@ -1,4 +1,4 @@
-package com.ADHD.adhdcompanion;
+package com.adhd.adhdcompanion;
 
 import com.getcapacitor.BridgeActivity;
 

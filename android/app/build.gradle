@@ -1,10 +1,10 @@
 apply plugin: 'com.android.application'
 
 android {
-    namespace "com.ADHD.adhdcompanion"
+    namespace "com.adhd.adhdcompanion"
     compileSdk rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "com.ADHD.adhdcompanion"
+        applicationId "com.adhd.adhdcompanion"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1

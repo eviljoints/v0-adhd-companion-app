@@ -7,7 +7,7 @@
     "dev": "next dev",
     "lint": "next lint",
     "start": "next start",
-    "cap:init": "cap init \"ADHD Companion\" com.ADHD.adhdcompanion",
+    "cap:init": "cap init \"ADHD Companion\" com.adhd.adhdcompanion",
     "cap:add:android": "cap add android",
     "cap:sync": "cap sync",
     "cap:open:android": "cap open android"

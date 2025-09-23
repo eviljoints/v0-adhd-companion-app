@@ -85,7 +85,7 @@ export async function POST(req: Request) {
 
     switch (type) {
       case "daily-mantra":
-        prompt = `Generate a short, encouraging daily mantra specifically for someone with ADHD.
+        prompt = `Generate a short, encouraging daily mantra specifically for someone with adhd.
 The mantra should be:
 - Positive and empowering
 - 1–2 sentences max
@@ -126,7 +126,7 @@ Return only the tip, no quotes or extra formatting.`
         break
 
       case "chat":
-        prompt = `You are an empathetic AI coach for people with ADHD.
+        prompt = `You are an empathetic AI coach for people with adhd.
 You understand ADHD challenges like executive dysfunction, rejection sensitivity, hyperfocus, and emotional regulation.
 
 ${personalContext ? `Personal context about this user: ${personalContext}` : ""}${recentChatBullets}
